@@ -1,0 +1,287 @@
+/* ScholarSwift Custom Styles */
+
+/* =========================
+   Base Styles
+========================= */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    font-family: 'Space Grotesk', sans-serif;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+}
+
+/* =========================
+   Gradient Background
+========================= */
+
+.gradient-bg {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+}
+
+/* =========================
+   Glass Card Effect
+========================= */
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 2rem;
+}
+
+/* =========================
+   Pulse Animation
+========================= */
+
+.pulse-dot {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(1.1);
+    }
+}
+
+/* =========================
+   Slide In Animation
+========================= */
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-slide {
+    animation: slideIn 0.5s ease-out forwards;
+}
+
+/* =========================
+   Token Active State
+========================= */
+
+.token-active {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    animation: glow 2s infinite;
+}
+
+@keyframes glow {
+    0%, 100% {
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 40px rgba(16, 185, 129, 0.6);
+    }
+}
+
+/* =========================
+   Custom Scrollbar
+========================= */
+
+.scroll-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scroll-container::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 3px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* =========================
+   Form Focus States (FIXED)
+========================= */
+
+input:focus,
+select:focus,
+button:focus {
+    outline: none;
+    border: 2px solid #10b981;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3);
+}
+
+/* =========================
+   Loading Animation
+========================= */
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* =========================
+   Responsive Adjustments
+========================= */
+
+@media (max-width: 640px) {
+    .glass-card {
+        padding: 1.5rem;
+    }
+
+    h1 {
+        font-size: 1.875rem;
+    }
+
+    .text-4xl {
+        font-size: 1.875rem;
+    }
+}
+
+/* =========================
+   Print Styles
+========================= */
+
+@media print {
+    .gradient-bg {
+        background: white;
+    }
+
+    .glass-card {
+        box-shadow: none;
+        border: 1px solid #e2e8f0;
+    }
+
+    .no-print {
+        display: none;
+    }
+}
+
+/* =========================
+   Status Badge Styles
+========================= */
+
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-verified {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.status-rejected {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.status-current {
+    background-color: #dbeafe;
+    color: #1e40af;
+    animation: pulse 2s infinite;
+}
+
+.status-pending {
+    background-color: #f1f5f9;
+    color: #475569;
+}
+
+/* =========================
+   Button Hover Effects
+========================= */
+
+.hover-scale {
+    transition: transform 0.3s ease;
+}
+
+.hover-scale:hover {
+    transform: scale(1.02);
+}
+
+/* =========================
+   Department Card Styles
+========================= */
+
+.dept-card {
+    transition: all 0.3s ease;
+}
+
+.dept-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+/* =========================
+   Toast Animation
+========================= */
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.toast-show {
+    animation: slideInRight 0.3s ease forwards;
+}
+
+/* =========================
+   Table Row Hover
+========================= */
+
+tbody tr:hover {
+    background-color: rgba(241, 245, 249, 0.5);
+}
+
+/* =========================
+   Disabled State
+========================= */
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* =========================
+   Gradient Text
+========================= */
+
+.gradient-text {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
