@@ -1,5 +1,21 @@
 const mongoose = require('mongoose');
 
+// Document verification schema
+const documentSchema = new mongoose.Schema({
+    name: String,
+    status: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected', 'not_required'],
+        default: 'pending'
+    },
+    verifiedAt: Date,
+    verifiedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
+    notes: String
+}, { _id: false });
+
 const bookingSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -16,10 +32,27 @@ const bookingSchema = new mongoose.Schema({
     },
     department: {
         type: String,
-        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH'],
+        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'],
         required: true
     },
-    // REMOVED: currentYear, grNumber, scholarId - these come from User model
+    scholarId: {
+        type: String,
+        required: true
+    },
+    grNumber: {
+        type: String,
+        required: true
+    },
+    currentYear: {
+        type: String,
+        enum: ['FE', 'SE', 'TE', 'BE'],
+        required: true
+    },
+    scholarshipType: {
+        type: String,
+        enum: ['SC', 'ST', 'OBC', 'EBC', 'Other'],
+        required: true
+    },
     uniqueKey: {
         type: String,
         required: true
@@ -41,24 +74,14 @@ const bookingSchema = new mongoose.Schema({
         enum: ['pending', 'current', 'verified', 'rejected', 'no-show'],
         default: 'pending'
     },
+    
+    // Document verification
     documents: {
-        document1: {
-            status: {
-                type: String,
-                enum: ['pending', 'approved', 'rejected'],
-                default: 'pending'
-            },
-            notes: String
-        },
-        document2: {
-            status: {
-                type: String,
-                enum: ['pending', 'approved', 'rejected'],
-                default: 'pending'
-            },
-            notes: String
-        }
+        type: Map,
+        of: documentSchema,
+        default: new Map()
     },
+    
     verificationTime: {
         type: Date
     },
@@ -68,6 +91,13 @@ const bookingSchema = new mongoose.Schema({
     },
     rejectionReason: String,
     notes: String,
+    
+    // Track if student was rejected (to allow rebooking)
+    canRebook: {
+        type: Boolean,
+        default: true
+    },
+    
     createdAt: {
         type: Date,
         default: Date.now
@@ -110,19 +140,72 @@ bookingSchema.statics.generateTokenNumber = async function(department, slotDate)
     const count = await this.countDocuments({ 
         department, 
         slotDate,
-        status: { $ne: 'rejected' }
+        status: { $nin: ['rejected', 'no-show'] }
     });
     return count + 1;
 };
 
 // Calculate estimated wait time
 bookingSchema.methods.getEstimatedWaitTime = function() {
-    const baseTime = 7; // 7 minutes per token
+    const baseTime = 7;
     return this.tokenNumber * baseTime;
 };
 
+// Get document checklist based on scholarship type
+bookingSchema.methods.getRequiredDocuments = function() {
+    const baseDocuments = [
+        'aadhar', 'domicile', 'income', 'ssc', 'hsc', 'previousYear',
+        'feeReceipt', 'capLetter', 'bankPassbook', 'bonafide', 'leaving', 'selfDeclaration'
+    ];
+
+    if (this.scholarshipType === 'SC' || this.scholarshipType === 'ST') {
+        return [...baseDocuments, 'caste', 'casteValidity'];
+    } else if (this.scholarshipType === 'OBC') {
+        return [...baseDocuments, 'caste', 'casteValidity', 'nonCreamy'];
+    } else {
+        return baseDocuments;
+    }
+};
+
+// Initialize documents for a booking
+bookingSchema.methods.initializeDocuments = function() {
+    const requiredDocs = this.getRequiredDocuments();
+    const documents = new Map();
+    
+    requiredDocs.forEach(docId => {
+        documents.set(docId, {
+            name: getDocumentName(docId),
+            status: 'pending'
+        });
+    });
+    
+    this.documents = documents;
+};
+
+// Helper function to get document display names
+function getDocumentName(docId) {
+    const names = {
+        'aadhar': 'Aadhar Card',
+        'domicile': 'Domicile Certificate',
+        'income': 'Income Certificate',
+        'ssc': 'SSC Marksheet',
+        'hsc': 'HSC Marksheet',
+        'previousYear': 'Previous Year/Semester Marksheet',
+        'feeReceipt': 'College Fee Receipt',
+        'capLetter': 'CAP Allotment Letter',
+        'bankPassbook': 'Bank Passbook',
+        'bonafide': 'College Bonafide Certificate',
+        'leaving': 'Leaving Certificate',
+        'selfDeclaration': 'Self Declaration',
+        'caste': 'Caste Certificate',
+        'casteValidity': 'Caste Validity Certificate',
+        'nonCreamy': 'Non-Creamy Layer Certificate'
+    };
+    return names[docId] || docId;
+}
+
 // Get weekly stats
-bookingSchema.statics.getWeeklyStats = async function(weekOffset = 0) {
+bookingSchema.statics.getWeeklyStats = async function(weekOffset = 0, department = null) {
     const today = new Date();
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - today.getDay() + 1 - (weekOffset * 7));
@@ -135,39 +218,29 @@ bookingSchema.statics.getWeeklyStats = async function(weekOffset = 0) {
     const startStr = startOfWeek.toISOString().split('T')[0];
     const endStr = endOfWeek.toISOString().split('T')[0];
     
-    const bookings = await this.find({
+    const query = {
         slotDate: { $gte: startStr, $lte: endStr }
-    });
+    };
+    
+    if (department && department !== 'all') {
+        query.department = department;
+    }
+    
+    const bookings = await this.find(query);
     
     return {
         weekStart: startStr,
         weekEnd: endStr,
         total: bookings.length,
-        byDepartment: {
-            DS: bookings.filter(b => b.department === 'DS').length,
-            AIML: bookings.filter(b => b.department === 'AIML').length,
-            COMP: bookings.filter(b => b.department === 'COMP').length,
-            IT: bookings.filter(b => b.department === 'IT').length,
-            MECH: bookings.filter(b => b.department === 'MECH').length
-        },
-        byStatus: {
-            pending: bookings.filter(b => b.status === 'pending').length,
-            current: bookings.filter(b => b.status === 'current').length,
-            verified: bookings.filter(b => b.status === 'verified').length,
-            rejected: bookings.filter(b => b.status === 'rejected').length
-        },
-        byDay: {
-            Monday: bookings.filter(b => new Date(b.slotDate).getDay() === 1).length,
-            Tuesday: bookings.filter(b => new Date(b.slotDate).getDay() === 2).length,
-            Wednesday: bookings.filter(b => new Date(b.slotDate).getDay() === 3).length,
-            Thursday: bookings.filter(b => new Date(b.slotDate).getDay() === 4).length,
-            Friday: bookings.filter(b => new Date(b.slotDate).getDay() === 5).length
-        }
+        verified: bookings.filter(b => b.status === 'verified').length,
+        rejected: bookings.filter(b => b.status === 'rejected').length,
+        pending: bookings.filter(b => b.status === 'pending').length,
+        current: bookings.filter(b => b.status === 'current').length
     };
 };
 
 // Get monthly stats
-bookingSchema.statics.getMonthlyStats = async function(monthOffset = 0) {
+bookingSchema.statics.getMonthlyStats = async function(monthOffset = 0, department = null) {
     const today = new Date();
     const targetMonth = new Date(today.getFullYear(), today.getMonth() - monthOffset, 1);
     const year = targetMonth.getFullYear();
@@ -175,28 +248,25 @@ bookingSchema.statics.getMonthlyStats = async function(monthOffset = 0) {
     
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
     
-    const bookings = await this.find({
+    const query = {
         slotDate: { $regex: `^${monthStr}` }
-    });
+    };
+    
+    if (department && department !== 'all') {
+        query.department = department;
+    }
+    
+    const bookings = await this.find(query);
     
     return {
         year,
         month,
         monthName: targetMonth.toLocaleString('default', { month: 'long' }),
         total: bookings.length,
-        byDepartment: {
-            DS: bookings.filter(b => b.department === 'DS').length,
-            AIML: bookings.filter(b => b.department === 'AIML').length,
-            COMP: bookings.filter(b => b.department === 'COMP').length,
-            IT: bookings.filter(b => b.department === 'IT').length,
-            MECH: bookings.filter(b => b.department === 'MECH').length
-        },
-        byStatus: {
-            pending: bookings.filter(b => b.status === 'pending').length,
-            current: bookings.filter(b => b.status === 'current').length,
-            verified: bookings.filter(b => b.status === 'verified').length,
-            rejected: bookings.filter(b => b.status === 'rejected').length
-        }
+        verified: bookings.filter(b => b.status === 'verified').length,
+        rejected: bookings.filter(b => b.status === 'rejected').length,
+        pending: bookings.filter(b => b.status === 'pending').length,
+        current: bookings.filter(b => b.status === 'current').length
     };
 };
 

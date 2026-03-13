@@ -33,16 +33,16 @@ const userSchema = new mongoose.Schema({
         trim: true,
         validate: {
             validator: function(v) {
-                return /^[0-9]{10}$/.test(v);
+                return this.userType === 'admin' || /^[0-9]{10}$/.test(v);
             },
             message: 'Please enter a valid 10-digit mobile number'
         }
     },
     
-    // Student Profile Fields (only for students)
+    // Student Profile Fields
     department: {
         type: String,
-        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH'],
+        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'],
         required: function() {
             return this.userType === 'student';
         }
@@ -80,7 +80,7 @@ const userSchema = new mongoose.Schema({
         required: function() {
             return this.userType === 'student';
         },
-        enum: ['Merit', 'Need-based', 'Sports', 'Research', 'Minority', 'Other']
+        enum: ['SC', 'ST', 'OBC', 'EBC', 'Other']
     },
     scholarId: {
         type: String,
@@ -126,7 +126,7 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
     return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Generate unique key for display (like DS-001)
+// Generate unique key for display
 userSchema.statics.generateUniqueKey = async function(department, userType) {
     if (userType === 'admin') {
         const adminCount = await this.countDocuments({ userType: 'admin' });
@@ -149,7 +149,6 @@ userSchema.statics.generateScholarId = async function(department, joiningYear) {
         department 
     });
     
-    // Format: DS-2024-001, AIML-2024-001, etc.
     return `${department}-${year}-${String(count + 1).padStart(3, '0')}`;
 };
 

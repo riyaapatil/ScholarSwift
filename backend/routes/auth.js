@@ -5,7 +5,7 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { protect, generateToken } = require('../middleware/auth');
 
-// Validation rules for signup
+// Validation rules for signup - UPDATED with correct scholarship types
 const validateSignup = [
     body('name').notEmpty().withMessage('Name is required'),
     body('email').isEmail().withMessage('Please enter a valid email'),
@@ -14,7 +14,7 @@ const validateSignup = [
     body('mobileNumber').notEmpty().withMessage('Mobile number is required')
         .matches(/^[0-9]{10}$/).withMessage('Please enter a valid 10-digit mobile number'),
     
-    // Student specific validations
+    // Student specific validations - UPDATED scholarship types
     body('department').if(body('userType').equals('student')).notEmpty().withMessage('Department is required for students'),
     body('currentYear').if(body('userType').equals('student')).notEmpty().withMessage('Current year is required')
         .isIn(['FE', 'SE', 'TE', 'BE']).withMessage('Invalid current year'),
@@ -22,7 +22,7 @@ const validateSignup = [
         .matches(/^\d{4}$/).withMessage('Joining year must be a valid year (YYYY)'),
     body('grNumber').if(body('userType').equals('student')).notEmpty().withMessage('GR number is required'),
     body('scholarshipType').if(body('userType').equals('student')).notEmpty().withMessage('Scholarship type is required')
-        .isIn(['Merit', 'Need-based', 'Sports', 'Research', 'Minority', 'Other']).withMessage('Invalid scholarship type')
+        .isIn(['SC', 'ST', 'OBC', 'EBC', 'Other']).withMessage('Invalid scholarship type') // UPDATED
 ];
 
 // Validation rules for login
@@ -37,6 +37,7 @@ const validateLogin = [
 router.post('/signup', validateSignup, async (req, res) => {
     try {
         console.log('📝 Signup attempt for email:', req.body.email);
+        console.log('Request body:', req.body);
         
         // Check for validation errors
         const errors = validationResult(req);
@@ -98,7 +99,7 @@ router.post('/signup', validateSignup, async (req, res) => {
             userData.currentYear = currentYear;
             userData.joiningYear = joiningYear;
             userData.grNumber = grNumber;
-            userData.scholarshipType = scholarshipType;
+            userData.scholarshipType = scholarshipType; // This will be SC, ST, OBC, EBC, or Other
         }
 
         // Create user
