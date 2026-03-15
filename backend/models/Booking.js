@@ -32,7 +32,7 @@ const bookingSchema = new mongoose.Schema({
     },
     department: {
         type: String,
-        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'],
+        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO', 'SAT', 'SUN'],
         required: true
     },
     scholarId: {
@@ -71,7 +71,7 @@ const bookingSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'current', 'verified', 'rejected', 'no-show'],
+        enum: ['pending', 'current', 'verified', 'rejected', 'no-show', 'cancelled'],
         default: 'pending'
     },
     
@@ -140,7 +140,7 @@ bookingSchema.statics.generateTokenNumber = async function(department, slotDate)
     const count = await this.countDocuments({ 
         department, 
         slotDate,
-        status: { $nin: ['rejected', 'no-show'] }
+        status: { $nin: ['rejected', 'no-show', 'cancelled'] }
     });
     return count + 1;
 };

@@ -21,7 +21,9 @@ router.get('/dashboard', protect, adminOnly, async (req, res) => {
             2: ['AIML'],
             3: ['COMP'],
             4: ['IT'],
-            5: ['MECH', 'CIVIL', 'AUTO']
+            5: ['MECH', 'CIVIL', 'AUTO'],
+            6: ['SAT'],  // Saturday
+            0: ['SUN']   // Sunday
         };
         
         const todaysDepts = dayToDept[dayOfWeek] || [];

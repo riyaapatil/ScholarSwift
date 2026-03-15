@@ -6,6 +6,44 @@ const Booking = require('../models/Booking');
 const User = require('../models/User');
 const { protect, studentOnly } = require('../middleware/auth');
 
+// @route   PUT /api/bookings/cancel/:bookingId
+// @desc    Cancel a booking
+// @access  Private
+router.put('/cancel/:bookingId', protect, async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        
+        const booking = await Booking.findOne({
+            _id: bookingId,
+            userId: req.user._id
+        });
+        
+        if (!booking) {
+            return res.status(404).json({ message: 'Booking not found' });
+        }
+        
+        // Can only cancel pending bookings
+        if (booking.status !== 'pending') {
+            return res.status(400).json({ 
+                message: 'Cannot cancel a booking that is already in progress or completed' 
+            });
+        }
+        
+        booking.status = 'cancelled';
+        booking.canRebook = true;
+        await booking.save();
+        
+        res.json({ 
+            message: 'Booking cancelled successfully',
+            canRebook: true 
+        });
+        
+    } catch (error) {
+        console.error('❌ Cancel booking error:', error);
+        res.status(500).json({ message: 'Server error: ' + error.message });
+    }
+});
+
 // Department to day mapping (Friday has multiple departments)
 const deptToDay = {
     'DS': 1,      // Monday
@@ -14,7 +52,9 @@ const deptToDay = {
     'IT': 4,      // Thursday
     'MECH': 5,    // Friday
     'CIVIL': 5,   // Friday
-    'AUTO': 5     // Friday
+    'AUTO': 5,     // Friday
+    'SAT': 6,     // Saturday
+    'SUN': 0      // Sunday
 };
 
 // Validation rules
@@ -234,7 +274,7 @@ router.get('/position', protect, async (req, res) => {
             });
         }
 
-        // Count students before in queue
+        // Count students before in queue (excluding cancelled and rejected)
         const studentsBefore = await Booking.countDocuments({
             department: userBooking.department,
             slotDate: today,

@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema({
     // Student Profile Fields
     department: {
         type: String,
-        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'],
+        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO', 'SAT', 'SUN'],
         required: function() {
             return this.userType === 'student';
         }
