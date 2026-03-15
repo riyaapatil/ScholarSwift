@@ -205,24 +205,28 @@ function updateFormFields() {
         mobileField.classList.remove('hidden');
         
         if (userType === 'student') {
+            // Student signup - show all fields
             deptField.classList.remove('hidden');
             studentProfileFields.classList.remove('hidden');
+            
             passwordInput.required = true;
             passwordInput.placeholder = '•••••••• (min 6 characters)';
             passwordHint.textContent = 'Password must be at least 6 characters';
+            
         } else {
-            deptField.classList.add('hidden');
-            studentProfileFields.classList.add('hidden');
-            passwordInput.required = false;
-            passwordInput.placeholder = 'Optional - default: admin123';
-            passwordHint.textContent = 'Leave blank to use default password: admin123';
-            passwordInput.value = '';
+            // Admin CANNOT sign up - show message and switch to login
+            alert('Admin signup is disabled. Please use the admin login credentials provided by the system.');
+            setAuthMode('login');
+            return;
         }
     } else {
+        // Login mode - hide all extra fields
         nameField.classList.add('hidden');
         deptField.classList.add('hidden');
         mobileField.classList.add('hidden');
         studentProfileFields.classList.add('hidden');
+        
+        // Password is required for login
         passwordInput.required = true;
         passwordInput.placeholder = '••••••••';
         passwordHint.textContent = '';
@@ -298,6 +302,13 @@ async function handleAuth(event) {
     
     const errorDiv = document.getElementById('authError');
     
+    // Prevent admin signup
+    if (authMode === 'signup' && userType === 'admin') {
+        errorDiv.textContent = 'Admin signup is not allowed. Please contact the system administrator.';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailPattern.test(email)) {
         errorDiv.textContent = 'Please enter a valid email address';
@@ -339,6 +350,12 @@ async function handleAuth(event) {
                 errorDiv.classList.remove('hidden');
                 return;
             }
+            // Fixed validation for joining year
+            if (!/^\d{4}$/.test(joiningYear)) {
+                errorDiv.textContent = 'Please select a valid joining year';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
             if (!grNumber) {
                 errorDiv.textContent = 'Please enter GR number';
                 errorDiv.classList.remove('hidden');
@@ -356,6 +373,7 @@ async function handleAuth(event) {
             }
         }
     } else {
+        // Login mode - password required
         if (!password) {
             errorDiv.textContent = 'Please enter your password';
             errorDiv.classList.remove('hidden');
@@ -372,18 +390,15 @@ async function handleAuth(event) {
             const userData = {
                 name,
                 email,
-                userType,
-                mobileNumber
+                userType: 'student', // Force to student
+                mobileNumber,
+                password,
+                department: dept,
+                currentYear,
+                joiningYear,
+                grNumber,
+                scholarshipType
             };
-            
-            if (userType === 'student') {
-                userData.password = password;
-                userData.department = dept;
-                userData.currentYear = currentYear;
-                userData.joiningYear = joiningYear;
-                userData.grNumber = grNumber;
-                userData.scholarshipType = scholarshipType;
-            }
             
             response = await apiRequest('/auth/signup', {
                 method: 'POST',
@@ -434,7 +449,6 @@ function logout() {
 
 // ==================== STUDENT DASHBOARD FUNCTIONS ====================
 
-// 🔴 NEW: Show Student Dashboard function (was missing)
 async function showStudentDashboard() {
     log('Showing student dashboard');
     
@@ -460,6 +474,17 @@ async function showStudentDashboard() {
         
         // Add event listeners
         document.getElementById('slotDate').addEventListener('change', loadAvailableSlots);
+        
+        // Set up auto-refresh every 30 seconds
+        if (window.studentRefreshInterval) {
+            clearInterval(window.studentRefreshInterval);
+        }
+        window.studentRefreshInterval = setInterval(async () => {
+            if (currentUser && currentUser.userType === 'student') {
+                log('Auto-refreshing student dashboard...');
+                await updateStudentDashboard();
+            }
+        }, 30000);
         
         log('Student dashboard shown successfully');
     } catch (error) {
@@ -490,17 +515,28 @@ function restrictDateToDepartmentDay() {
     dateInput.max = maxDate.toISOString().split('T')[0];
 }
 
-// 🔴 FIXED: Single updateStudentDashboard function (removed duplicate)
 async function updateStudentDashboard() {
     log('Updating student dashboard...');
     
     try {
+        // Check if user is logged in and is a student
+        if (!currentUser || currentUser.userType !== 'student') {
+            log('Not a student or not logged in');
+            return;
+        }
+        
+        // Get user's position in queue
+        log('Fetching position for student:', currentUser.email);
         const positionResponse = await apiRequest('/bookings/position');
+        log('Position response:', positionResponse);
+        
+        // Get current token for department
         const currentResponse = await apiRequest(`/bookings/current?department=${currentUser.department}`);
+        log('Current token response:', currentResponse);
         
-        document.getElementById('currentToken').textContent = currentResponse.currentToken || 'No active token';
-        
+        // Get all DOM elements
         const elements = {
+            currentToken: document.getElementById('currentToken'),
             yourToken: document.getElementById('yourToken'),
             studentsAhead: document.getElementById('studentsAhead'),
             waitTime: document.getElementById('waitTime'),
@@ -510,84 +546,101 @@ async function updateStudentDashboard() {
             pendingMsg: document.getElementById('pendingMessage'),
             rejectedMsg: document.getElementById('rejectedMessage'),
             studentsBeforeYou: document.getElementById('studentsBeforeYou'),
-            rejectionReason: document.getElementById('rejectionReason'),
-            bookingConfirmation: document.getElementById('bookingConfirmation')
+            bookingConfirmation: document.getElementById('bookingConfirmation'),
+            slotDate: document.getElementById('slotDate'),
+            slotTime: document.getElementById('slotTime'),
+            bookSlotBtn: document.getElementById('bookSlotBtn')
         };
         
-        // Hide all messages first
-        Object.values(elements).forEach(el => {
-            if (el && el.classList) el.classList.add('hidden');
-        });
+        // Update current token
+        if (elements.currentToken) {
+            elements.currentToken.textContent = currentResponse.currentToken || 'No active token';
+        }
+        
+        // Hide all status messages first
+        if (elements.reminderBanner) elements.reminderBanner.classList.add('hidden');
+        if (elements.verifiedMsg) elements.verifiedMsg.classList.add('hidden');
+        if (elements.pendingMsg) elements.pendingMsg.classList.add('hidden');
+        if (elements.rejectedMsg) elements.rejectedMsg.classList.add('hidden');
+        if (elements.cancelBtn) elements.cancelBtn.classList.add('hidden');
+        if (elements.bookingConfirmation) elements.bookingConfirmation.classList.add('hidden');
+        
+        // Default: enable booking form
+        if (elements.slotDate) elements.slotDate.disabled = false;
+        if (elements.slotTime) elements.slotTime.disabled = false;
+        if (elements.bookSlotBtn) {
+            elements.bookSlotBtn.disabled = false;
+            elements.bookSlotBtn.innerHTML = 'Book Slot';
+            elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
         
         if (positionResponse.hasBooking) {
-            // Always show booked slot details
-            if (elements.yourToken) elements.yourToken.textContent = positionResponse.token || '--';
-            if (elements.studentsAhead) elements.studentsAhead.textContent = positionResponse.studentsBefore || 0;
-            if (elements.waitTime) elements.waitTime.textContent = `${positionResponse.estimatedWaitTime || 0} min`;
+            // Update the three main fields
+            if (elements.yourToken) {
+                elements.yourToken.textContent = positionResponse.token || '--';
+                log('Updated yourToken to:', positionResponse.token);
+            }
+            
+            if (elements.studentsAhead) {
+                elements.studentsAhead.textContent = positionResponse.studentsBefore || 0;
+                log('Updated studentsAhead to:', positionResponse.studentsBefore);
+            }
+            
+            if (elements.waitTime) {
+                elements.waitTime.textContent = `${positionResponse.estimatedWaitTime || 0} min`;
+                log('Updated waitTime to:', `${positionResponse.estimatedWaitTime} min`);
+            }
             
             const status = positionResponse.status;
             log('Booking status:', status);
             
             // Show appropriate message based on status
             if (status === 'verified') {
-                // Show verification done message
                 if (elements.verifiedMsg) {
                     elements.verifiedMsg.classList.remove('hidden');
-                    elements.verifiedMsg.innerHTML = `
-                        <div class="flex items-center gap-3">
-                            <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div>
-                                <p class="font-semibold text-emerald-800">✅ Verification Complete!</p>
-                                <p class="text-sm text-emerald-600">Your documents have been verified successfully.</p>
-                                <p class="text-xs text-emerald-500 mt-1">Token: ${positionResponse.token}</p>
-                            </div>
-                        </div>
-                    `;
                 }
-                if (elements.cancelBtn) elements.cancelBtn.classList.add('hidden');
+                
+                // VERIFIED STUDENTS CANNOT BOOK
+                if (elements.slotDate) elements.slotDate.disabled = true;
+                if (elements.slotTime) elements.slotTime.disabled = true;
+                if (elements.bookSlotBtn) {
+                    elements.bookSlotBtn.disabled = true;
+                    elements.bookSlotBtn.innerHTML = 'Already Verified';
+                    elements.bookSlotBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
             }
             else if (status === 'rejected') {
-                // Show rejected message with rebook option
                 if (elements.rejectedMsg) {
                     elements.rejectedMsg.classList.remove('hidden');
-                    elements.rejectedMsg.innerHTML = `
-                        <div class="flex items-center gap-3">
-                            <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div>
-                                <p class="font-semibold text-red-800">❌ Your application was rejected</p>
-                                <p class="text-sm text-red-600 mt-1">Your documents were rejected. Please book a new slot with correct documents.</p>
-                                <p class="text-xs text-red-500 mt-1">Token: ${positionResponse.token}</p>
-                                <button onclick="enableRebooking()" class="mt-3 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-all">
-                                    Book New Slot
-                                </button>
-                            </div>
-                        </div>
-                    `;
                 }
-                if (elements.cancelBtn) elements.cancelBtn.classList.add('hidden');
+                
+                // REJECTED STUDENTS CAN BOOK AGAIN
+                if (elements.slotDate) elements.slotDate.disabled = false;
+                if (elements.slotTime) elements.slotTime.disabled = false;
+                if (elements.bookSlotBtn) {
+                    elements.bookSlotBtn.disabled = false;
+                    elements.bookSlotBtn.innerHTML = 'Book New Slot';
+                    elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
             }
             else if (status === 'pending') {
-                // Show pending message with cancel button
                 if (elements.pendingMsg) {
                     elements.pendingMsg.classList.remove('hidden');
-                    elements.pendingMsg.innerHTML = `
-                        <div class="flex items-center gap-3">
-                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div>
-                                <p class="font-semibold text-blue-800">⏳ Verification Pending</p>
-                                <p class="text-sm text-blue-600">Your documents are waiting to be verified by the admin.</p>
-                                <p class="text-xs text-blue-500 mt-1">Token: ${positionResponse.token} | Students Ahead: ${positionResponse.studentsBefore || 0}</p>
-                            </div>
-                        </div>
-                    `;
                 }
-                if (elements.cancelBtn) elements.cancelBtn.classList.remove('hidden');
+                
+                // Show cancel button for pending
+                if (elements.cancelBtn) {
+                    elements.cancelBtn.classList.remove('hidden');
+                }
+                
+                // PENDING STUDENTS CANNOT BOOK
+                if (elements.slotDate) elements.slotDate.disabled = true;
+                if (elements.slotTime) elements.slotTime.disabled = true;
+                if (elements.bookSlotBtn) {
+                    elements.bookSlotBtn.disabled = true;
+                    elements.bookSlotBtn.innerHTML = 'Already Booked';
+                    elements.bookSlotBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
                 
                 // Show reminder if close to front (less than 3 students ahead)
                 if (positionResponse.studentsBefore <= 3 && elements.reminderBanner) {
@@ -595,48 +648,67 @@ async function updateStudentDashboard() {
                     if (elements.studentsBeforeYou) {
                         elements.studentsBeforeYou.textContent = positionResponse.studentsBefore;
                     }
-                    elements.reminderBanner.innerHTML = `
-                        <div class="flex items-center gap-3">
-                            <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div>
-                                <p class="font-semibold text-amber-800">🎯 Your turn is coming up!</p>
-                                <p class="text-sm text-amber-600">Only <span id="studentsBeforeYou">${positionResponse.studentsBefore}</span> students before you. Please be ready with your documents.</p>
-                            </div>
-                        </div>
-                    `;
                 }
             }
             else if (status === 'current') {
-                // Currently being served
                 if (elements.pendingMsg) {
                     elements.pendingMsg.classList.remove('hidden');
-                    elements.pendingMsg.innerHTML = `
-                        <div class="flex items-center gap-3">
-                            <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                            </svg>
-                            <div>
-                                <p class="font-semibold text-purple-800">🔔 You are currently being served</p>
-                                <p class="text-sm text-purple-600">Please wait for the admin to verify your documents.</p>
-                                <p class="text-xs text-purple-500 mt-1">Token: ${positionResponse.token}</p>
-                            </div>
-                        </div>
-                    `;
+                    const msgEl = elements.pendingMsg.querySelector('p:last-child');
+                    if (msgEl) msgEl.textContent = 'You are currently being served. Please wait for the admin to verify your documents.';
                 }
-                if (elements.cancelBtn) elements.cancelBtn.classList.add('hidden');
+                
+                // STUDENTS BEING SERVED CANNOT BOOK
+                if (elements.slotDate) elements.slotDate.disabled = true;
+                if (elements.slotTime) elements.slotTime.disabled = true;
+                if (elements.bookSlotBtn) {
+                    elements.bookSlotBtn.disabled = true;
+                    elements.bookSlotBtn.innerHTML = 'Being Served';
+                    elements.bookSlotBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
             }
         } else {
-            // No active booking
+            // No active booking - reset displays
             if (elements.yourToken) elements.yourToken.textContent = '--';
             if (elements.studentsAhead) elements.studentsAhead.textContent = '0';
             if (elements.waitTime) elements.waitTime.textContent = '--';
-            if (elements.cancelBtn) elements.cancelBtn.classList.add('hidden');
+            
+            // STUDENTS WITH NO BOOKING CAN BOOK
+            if (elements.slotDate) elements.slotDate.disabled = false;
+            if (elements.slotTime) elements.slotTime.disabled = false;
+            if (elements.bookSlotBtn) {
+                elements.bookSlotBtn.disabled = false;
+                elements.bookSlotBtn.innerHTML = 'Book Slot';
+                elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
         }
+        
+        // FORCE REPAINT - Force the browser to update the display
+        setTimeout(() => {
+            // Force a reflow on the specific elements
+            ['yourToken', 'studentsAhead', 'waitTime', 'currentToken'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    // Reading offsetHeight forces a reflow
+                    const forceReflow = el.offsetHeight;
+                    // Tiny style change and revert
+                    el.style.transform = 'translateZ(0)';
+                    setTimeout(() => { el.style.transform = ''; }, 10);
+                }
+            });
+            
+            // Also force repaint on the parent container
+            const container = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-4');
+            if (container) {
+                container.style.opacity = '0.99';
+                setTimeout(() => { container.style.opacity = '1'; }, 10);
+            }
+            
+            log('Force repaint completed');
+        }, 50);
         
     } catch (error) {
         console.error('Failed to update student dashboard:', error);
+        showToast('Error updating dashboard');
     }
 }
 
@@ -727,6 +799,20 @@ async function bookSlot() {
         return;
     }
     
+    // Check if user is already verified
+    try {
+        const checkResponse = await apiRequest('/bookings/my-bookings');
+        const today = new Date().toISOString().split('T')[0];
+        const existingBooking = checkResponse.bookings.find(b => b.slotDate === today);
+        
+        if (existingBooking && existingBooking.status === 'verified') {
+            showToast('You are already verified and cannot book another slot');
+            return;
+        }
+    } catch (error) {
+        console.log('Error checking verification status');
+    }
+    
     const btn = document.getElementById('bookSlotBtn');
     btn.disabled = true;
     btn.innerHTML = 'Booking...';
@@ -737,12 +823,12 @@ async function bookSlot() {
             body: JSON.stringify({ slotDate: date, slotTime: time })
         });
         
-        // Show booked slot details immediately
+        // Show booked slot details
         document.getElementById('yourToken').textContent = response.booking.token;
         document.getElementById('waitTime').textContent = `${response.booking.estimatedWaitTime} min`;
         document.getElementById('studentsAhead').textContent = response.booking.studentsBefore || 0;
         
-        // Show booking confirmation with details
+        // Show booking confirmation
         const confirmationDiv = document.getElementById('bookingConfirmation');
         if (confirmationDiv) {
             confirmationDiv.classList.remove('hidden');
@@ -753,15 +839,21 @@ async function bookSlot() {
                 Date: ${new Date(date).toLocaleDateString()}<br>
                 Students Ahead: ${response.booking.studentsBefore || 0}`;
             
-            // Hide after 8 seconds
             setTimeout(() => {
                 confirmationDiv.classList.add('hidden');
             }, 8000);
         }
         
-        // Show pending message and cancel button
+        // Show pending message and disable booking form
         document.getElementById('pendingMessage')?.classList.remove('hidden');
         document.getElementById('cancelBookingContainer')?.classList.remove('hidden');
+        
+        // Disable booking form after successful booking
+        document.getElementById('slotDate').disabled = true;
+        document.getElementById('slotTime').disabled = true;
+        document.getElementById('bookSlotBtn').disabled = true;
+        document.getElementById('bookSlotBtn').innerHTML = 'Already Booked';
+        document.getElementById('bookSlotBtn').classList.add('opacity-50', 'cursor-not-allowed');
         
         showToast('Slot booked successfully!');
         await loadAvailableSlots();
@@ -769,7 +861,7 @@ async function bookSlot() {
         
     } catch (error) {
         showToast(error.message || 'Failed to book slot');
-    } finally {
+        // Re-enable button on error
         btn.disabled = false;
         btn.innerHTML = 'Book Slot';
     }
@@ -1023,31 +1115,88 @@ async function loadAdminDashboard() {
     try {
         const response = await apiRequest('/admin/dashboard');
         
-        document.getElementById('todaysDept').textContent = `Today: ${response.today.departments?.join(', ') || 'No Department'}`;
-        document.getElementById('todaysDeptSidebar').textContent = response.today.departments?.join(', ') || 'No Department';
-        document.getElementById('adminCurrentTokenSidebar').textContent = response.today.currentToken || '---';
-        document.getElementById('totalTodaySidebar').textContent = response.today.total || 0;
-        document.getElementById('verifiedCountSidebar').textContent = response.today.verified || 0;
-        document.getElementById('rejectedCountSidebar').textContent = response.today.rejected || 0;
-        document.getElementById('pendingCountSidebar').textContent = response.today.pending || 0;
+        // Add null checks for all elements
+        const todaysDeptEl = document.getElementById('todaysDept');
+        if (todaysDeptEl) {
+            todaysDeptEl.textContent = `Today: ${response.today.departments?.join(', ') || 'No Department'}`;
+        }
         
-        document.getElementById('adminCurrentToken').textContent = response.today.currentToken || '---';
-        document.getElementById('totalToday').textContent = response.today.total || 0;
-        document.getElementById('verifiedCount').textContent = response.today.verified || 0;
-        document.getElementById('rejectedCount').textContent = response.today.rejected || 0;
+        const todaysDeptSidebar = document.getElementById('todaysDeptSidebar');
+        if (todaysDeptSidebar) {
+            todaysDeptSidebar.textContent = response.today.departments?.join(', ') || 'No Department';
+        }
+        
+        const adminCurrentTokenSidebar = document.getElementById('adminCurrentTokenSidebar');
+        if (adminCurrentTokenSidebar) {
+            adminCurrentTokenSidebar.textContent = response.today.currentToken || '---';
+        }
+        
+        const totalTodaySidebar = document.getElementById('totalTodaySidebar');
+        if (totalTodaySidebar) {
+            totalTodaySidebar.textContent = response.today.total || 0;
+        }
+        
+        const verifiedCountSidebar = document.getElementById('verifiedCountSidebar');
+        if (verifiedCountSidebar) {
+            verifiedCountSidebar.textContent = response.today.verified || 0;
+        }
+        
+        const rejectedCountSidebar = document.getElementById('rejectedCountSidebar');
+        if (rejectedCountSidebar) {
+            rejectedCountSidebar.textContent = response.today.rejected || 0;
+        }
+        
+        const pendingCountSidebar = document.getElementById('pendingCountSidebar');
+        if (pendingCountSidebar) {
+            pendingCountSidebar.textContent = response.today.pending || 0;
+        }
+        
+        const adminCurrentToken = document.getElementById('adminCurrentToken');
+        if (adminCurrentToken) {
+            adminCurrentToken.textContent = response.today.currentToken || '---';
+        }
+        
+        const totalToday = document.getElementById('totalToday');
+        if (totalToday) {
+            totalToday.textContent = response.today.total || 0;
+        }
+        
+        const verifiedCount = document.getElementById('verifiedCount');
+        if (verifiedCount) {
+            verifiedCount.textContent = response.today.verified || 0;
+        }
+        
+        const rejectedCount = document.getElementById('rejectedCount');
+        if (rejectedCount) {
+            rejectedCount.textContent = response.today.rejected || 0;
+        }
         
         if (response.weekly) {
-            document.getElementById('weeklyTotalStats').textContent = response.weekly.total || 0;
-            document.getElementById('weeklyVerified').textContent = response.weekly.verified || 0;
-            document.getElementById('weeklyRejected').textContent = response.weekly.rejected || 0;
-            document.getElementById('weeklyPending').textContent = response.weekly.pending || 0;
+            const weeklyTotalStats = document.getElementById('weeklyTotalStats');
+            if (weeklyTotalStats) weeklyTotalStats.textContent = response.weekly.total || 0;
+            
+            const weeklyVerified = document.getElementById('weeklyVerified');
+            if (weeklyVerified) weeklyVerified.textContent = response.weekly.verified || 0;
+            
+            const weeklyRejected = document.getElementById('weeklyRejected');
+            if (weeklyRejected) weeklyRejected.textContent = response.weekly.rejected || 0;
+            
+            const weeklyPending = document.getElementById('weeklyPending');
+            if (weeklyPending) weeklyPending.textContent = response.weekly.pending || 0;
         }
         
         if (response.monthly) {
-            document.getElementById('monthlyTotalStats').textContent = response.monthly.total || 0;
-            document.getElementById('monthlyVerified').textContent = response.monthly.verified || 0;
-            document.getElementById('monthlyRejected').textContent = response.monthly.rejected || 0;
-            document.getElementById('monthlyPending').textContent = response.monthly.pending || 0;
+            const monthlyTotalStats = document.getElementById('monthlyTotalStats');
+            if (monthlyTotalStats) monthlyTotalStats.textContent = response.monthly.total || 0;
+            
+            const monthlyVerified = document.getElementById('monthlyVerified');
+            if (monthlyVerified) monthlyVerified.textContent = response.monthly.verified || 0;
+            
+            const monthlyRejected = document.getElementById('monthlyRejected');
+            if (monthlyRejected) monthlyRejected.textContent = response.monthly.rejected || 0;
+            
+            const monthlyPending = document.getElementById('monthlyPending');
+            if (monthlyPending) monthlyPending.textContent = response.monthly.pending || 0;
         }
     } catch (error) {
         console.error('❌ Failed to load dashboard:', error);
@@ -1530,15 +1679,19 @@ function addExtraTime() {
 function showCurrentServing() {
     document.getElementById('currentServingContent')?.classList.remove('hidden');
     document.getElementById('adminStatisticsContent')?.classList.add('hidden');
+    document.getElementById('studentsRecordsContent')?.classList.add('hidden');
     document.getElementById('currentServingTab').className = 'w-full text-left px-4 py-3 rounded-xl bg-violet-50 text-violet-700 font-medium hover:bg-violet-100 transition-all flex items-center gap-3';
     document.getElementById('adminStatsTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
+    document.getElementById('studentsRecordsTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
 }
 
 function showAdminStatistics() {
     document.getElementById('currentServingContent')?.classList.add('hidden');
     document.getElementById('adminStatisticsContent')?.classList.remove('hidden');
+    document.getElementById('studentsRecordsContent')?.classList.add('hidden');
     document.getElementById('adminStatsTab').className = 'w-full text-left px-4 py-3 rounded-xl bg-violet-50 text-violet-700 font-medium hover:bg-violet-100 transition-all flex items-center gap-3';
     document.getElementById('currentServingTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
+    document.getElementById('studentsRecordsTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
     loadDepartmentStats();
 }
 
@@ -1558,6 +1711,508 @@ async function loadDepartmentStats() {
         }
     } catch (error) {
         console.error('Failed to load statistics:', error);
+    }
+}
+
+// ==================== STUDENTS RECORDS FUNCTIONS ====================
+let currentRecordsPage = 1;
+let recordsPerPage = 50;
+let totalRecords = 0;
+let allRecords = [];
+let filteredRecords = [];
+let allDocumentTypes = [];
+
+// Show students records content
+function showStudentsRecords() {
+    console.log('Showing students records');
+    
+    // Hide other content
+    document.getElementById('currentServingContent')?.classList.add('hidden');
+    document.getElementById('adminStatisticsContent')?.classList.add('hidden');
+    document.getElementById('studentsRecordsContent')?.classList.remove('hidden');
+    
+    // Update tab styles
+    document.getElementById('currentServingTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
+    document.getElementById('adminStatsTab').className = 'w-full text-left px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-100 transition-all flex items-center gap-3';
+    document.getElementById('studentsRecordsTab').className = 'w-full text-left px-4 py-3 rounded-xl bg-violet-50 text-violet-700 font-medium hover:bg-violet-100 transition-all flex items-center gap-3';
+    
+    // Load records
+    loadStudentsRecords();
+}
+
+// Load students records from API
+async function loadStudentsRecords() {
+    try {
+        console.log('Loading students records...');
+        
+        let department = document.getElementById('recordsDepartmentFilter')?.value || 'all';
+        
+        // Don't send "all" - send empty string instead
+        const deptParam = department === 'all' ? '' : department;
+        
+        console.log(`Fetching from: /admin/students/all?department=${deptParam}&page=${currentRecordsPage}&limit=${recordsPerPage}`);
+        
+        const response = await apiRequest(`/admin/students/all?department=${deptParam}&page=${currentRecordsPage}&limit=${recordsPerPage}`);
+        
+        console.log('API Response:', response);
+        
+        allRecords = response.students || [];
+        totalRecords = response.pagination?.total || 0;
+        filteredRecords = allRecords;
+        
+        // Collect all unique document types from all students
+        allDocumentTypes = new Set();
+        allRecords.forEach(student => {
+            if (student.documentStatus) {
+                Object.keys(student.documentStatus).forEach(docId => allDocumentTypes.add(docId));
+            }
+        });
+        
+        // Add default document types if none found
+        if (allDocumentTypes.size === 0) {
+            const defaultDocs = [
+                'aadhar', 'domicile', 'income', 'ssc', 'hsc', 'previousYear',
+                'feeReceipt', 'capLetter', 'bankPassbook', 'bonafide', 'leaving', 'selfDeclaration',
+                'caste', 'casteValidity', 'nonCreamy'
+            ];
+            defaultDocs.forEach(doc => allDocumentTypes.add(doc));
+        }
+        
+        allDocumentTypes = Array.from(allDocumentTypes).sort();
+        
+        console.log(`Loaded ${allRecords.length} records with ${allDocumentTypes.length} document types`);
+        renderRecordsTable();
+        updatePagination();
+        
+    } catch (error) {
+        console.error('Failed to load students records:', error);
+        
+        let errorMessage = 'Failed to load records. ';
+        if (error.message) {
+            errorMessage += error.message;
+        }
+        
+        showToast(errorMessage);
+        
+        const tbody = document.getElementById('studentsRecordsBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="20" class="px-6 py-8 text-center text-red-500">${errorMessage}. Check console for details.</td></tr>`;
+        }
+    }
+}
+
+// Render records table with document columns
+function renderRecordsTable() {
+    const tbody = document.getElementById('studentsRecordsBody');
+    if (!tbody) return;
+    
+    // Update table header with document columns
+    const thead = document.querySelector('#studentsRecordsContent thead tr');
+    if (thead) {
+        // Keep existing headers
+        let html = `
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">S.No</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Name</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Email</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Mobile</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Dept</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Year</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">GR No.</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Scholar ID</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Scholarship</th>
+            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Status</th>
+        `;
+        
+        // Add document columns with compact headers
+        allDocumentTypes.forEach(docId => {
+            // Use shorter names for document columns
+            let shortName = getDocumentShortName(docId);
+            html += `<th class="px-2 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap" title="${getDocumentDisplayName(docId)}">${shortName}</th>`;
+        });
+        
+        html += `<th class="px-3 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider whitespace-nowrap">Actions</th>`;
+        
+        thead.innerHTML = html;
+    }
+    
+    if (filteredRecords.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="20" class="px-6 py-8 text-center text-slate-500">No records found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = '';
+    
+    filteredRecords.forEach((student, index) => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-50';
+        row.dataset.id = student.id;
+        
+        // Get latest booking status badge
+        let statusBadge = '<span class="px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-xs whitespace-nowrap">No bookings</span>';
+        if (student.latestBooking) {
+            const status = student.latestBooking.status;
+            statusBadge = `<span class="px-2 py-1 rounded-full text-xs whitespace-nowrap ${
+                status === 'verified' ? 'bg-emerald-100 text-emerald-700' :
+                status === 'rejected' ? 'bg-red-100 text-red-700' :
+                status === 'current' ? 'bg-blue-100 text-blue-700' :
+                'bg-amber-100 text-amber-700'
+            }">${status}</span>`;
+        }
+        
+        // Start building row
+        let rowHtml = `
+            <td class="px-3 py-3 text-sm whitespace-nowrap">${(currentRecordsPage - 1) * recordsPerPage + index + 1}</td>
+            <td class="px-3 py-3">
+                <div class="font-medium text-slate-800 whitespace-nowrap">${student.name || 'N/A'}</div>
+                <div class="text-xs text-slate-500">${student.uniqueKey || ''}</div>
+            </td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">${student.email || 'N/A'}</td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">${student.mobileNumber || 'N/A'}</td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">
+                <span class="px-2 py-1 bg-violet-100 text-violet-700 rounded-full text-xs">${student.department || 'N/A'}</span>
+            </td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">${student.currentYear || 'N/A'}</td>
+            <td class="px-3 py-3 text-sm font-mono whitespace-nowrap">${student.grNumber || 'N/A'}</td>
+            <td class="px-3 py-3 text-sm font-mono whitespace-nowrap">${student.scholarId || 'N/A'}</td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">
+                <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">${student.scholarshipType || 'N/A'}</span>
+            </td>
+            <td class="px-3 py-3 text-sm whitespace-nowrap">${statusBadge}</td>
+        `;
+        
+        // Add document status columns - more compact representation
+        allDocumentTypes.forEach(docId => {
+            const status = student.documentStatus?.[docId] || 'not_submitted';
+            let statusClass = 'bg-slate-100 text-slate-600';
+            let statusText = '✗';
+            let title = getDocumentDisplayName(docId) + ': ';
+            
+            if (status === 'approved') {
+                statusClass = 'bg-emerald-100 text-emerald-700';
+                statusText = '✓';
+                title += 'Approved';
+            } else if (status === 'rejected') {
+                statusClass = 'bg-red-100 text-red-700';
+                statusText = '✗';
+                title += 'Rejected';
+            } else if (status === 'pending') {
+                statusClass = 'bg-amber-100 text-amber-700';
+                statusText = '⏳';
+                title += 'Pending';
+            } else {
+                title += 'Not Submitted';
+            }
+            
+            rowHtml += `<td class="px-2 py-3 text-center"><span class="px-1.5 py-1 rounded-full text-xs ${statusClass}" title="${title}">${statusText}</span></td>`;
+        });
+        
+        // Add actions
+        rowHtml += `
+            <td class="px-3 py-3 text-sm whitespace-nowrap">
+                <div class="flex gap-2">
+                    <button onclick="editStudentRecord('${student.id}')" class="text-amber-600 hover:text-amber-800 text-xs font-medium">
+                        Edit
+                    </button>
+                    <button onclick="viewStudentProfile('${student.id}')" class="text-violet-600 hover:text-violet-800 text-xs font-medium">
+                        View
+                    </button>
+                </div>
+            </td>
+        `;
+        
+        row.innerHTML = rowHtml;
+        tbody.appendChild(row);
+    });
+}
+
+// Helper function to get short document names for column headers
+function getDocumentShortName(docId) {
+    const shortNames = {
+        'aadhar': 'Aadhar',
+        'domicile': 'Domicile',
+        'income': 'Income',
+        'ssc': 'SSC',
+        'hsc': 'HSC',
+        'previousYear': 'Prev Yr',
+        'feeReceipt': 'Fee Rec',
+        'capLetter': 'CAP',
+        'bankPassbook': 'Bank',
+        'bonafide': 'Bonafide',
+        'leaving': 'LC',
+        'selfDeclaration': 'Self Dec',
+        'caste': 'Caste',
+        'casteValidity': 'Caste Val',
+        'nonCreamy': 'NCL'
+    };
+    return shortNames[docId] || docId.substring(0, 5);
+}
+
+// Filter records based on search input
+function filterRecords() {
+    const searchTerm = document.getElementById('recordsSearch').value.toLowerCase().trim();
+    
+    if (!searchTerm) {
+        filteredRecords = allRecords;
+    } else {
+        filteredRecords = allRecords.filter(student => 
+            (student.name && student.name.toLowerCase().includes(searchTerm)) ||
+            (student.email && student.email.toLowerCase().includes(searchTerm)) ||
+            (student.grNumber && student.grNumber.toLowerCase().includes(searchTerm)) ||
+            (student.scholarId && student.scholarId.toLowerCase().includes(searchTerm)) ||
+            (student.mobileNumber && student.mobileNumber.includes(searchTerm)) ||
+            (student.uniqueKey && student.uniqueKey.toLowerCase().includes(searchTerm))
+        );
+    }
+    
+    renderRecordsTable();
+}
+
+// View document details
+async function viewDocumentDetails(studentId) {
+    try {
+        const student = allRecords.find(s => s.id === studentId);
+        if (!student) {
+            // Fetch if not in current records
+            const response = await apiRequest(`/admin/students/${studentId}`);
+            const studentData = response.student;
+            const documents = {};
+            
+            // Get documents from bookings
+            if (response.bookings && response.bookings.length > 0) {
+                const latestBooking = response.bookings[0];
+                if (latestBooking.documents) {
+                    latestBooking.documents.forEach((value, key) => {
+                        documents[key] = value;
+                    });
+                }
+            }
+            
+            showDocumentModal(studentData, documents);
+        } else {
+            showDocumentModal(student, student.documentStatus || {});
+        }
+        
+    } catch (error) {
+        console.error('Error viewing documents:', error);
+        showToast('Failed to load document details');
+    }
+}
+
+// Show document modal
+function showDocumentModal(student, documents) {
+    const docTypes = Object.keys(documents);
+    
+    let html = `
+        <div class="mb-4">
+            <h3 class="text-lg font-semibold text-slate-800">${student.name || 'Student'}</h3>
+            <p class="text-sm text-slate-600">${student.email || ''} | ${student.department || ''}</p>
+        </div>
+        <div class="space-y-2 max-h-96 overflow-y-auto">
+    `;
+    
+    if (docTypes.length === 0) {
+        html += '<p class="text-slate-500 text-center py-4">No documents submitted yet</p>';
+    } else {
+        docTypes.sort().forEach(docId => {
+            const doc = documents[docId];
+            const status = doc?.status || 'pending';
+            const statusClass = {
+                'approved': 'bg-emerald-100 text-emerald-700',
+                'rejected': 'bg-red-100 text-red-700',
+                'pending': 'bg-amber-100 text-amber-700'
+            }[status] || 'bg-slate-100 text-slate-600';
+            
+            html += `
+                <div class="flex justify-between items-center p-3 border rounded-lg">
+                    <span class="text-sm font-medium">${getDocumentDisplayName(docId)}</span>
+                    <span class="px-2 py-1 rounded-full text-xs ${statusClass}">${status}</span>
+                </div>
+            `;
+        });
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('documentDetailsContent').innerHTML = html;
+    document.getElementById('documentDetailsModal').classList.remove('hidden');
+}
+
+// Close document modal
+function closeDocumentModal() {
+    document.getElementById('documentDetailsModal').classList.add('hidden');
+}
+
+// Edit student record
+async function editStudentRecord(studentId) {
+    try {
+        const response = await apiRequest(`/admin/students/${studentId}`);
+        const student = response.student;
+        
+        const editHtml = `
+            <form id="editStudentForm" onsubmit="saveStudentChanges(event, '${studentId}')">
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Name</label>
+                        <input type="text" id="editName" value="${student.name || ''}" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Email</label>
+                        <input type="email" id="editEmail" value="${student.email || ''}" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all" required>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Mobile Number</label>
+                        <input type="tel" id="editMobile" value="${student.mobileNumber || ''}" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                        <select id="editDepartment" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all">
+                            <option value="DS" ${student.department === 'DS' ? 'selected' : ''}>Data Science (DS)</option>
+                            <option value="AIML" ${student.department === 'AIML' ? 'selected' : ''}>AI & ML (AIML)</option>
+                            <option value="COMP" ${student.department === 'COMP' ? 'selected' : ''}>Computer Eng. (COMP)</option>
+                            <option value="IT" ${student.department === 'IT' ? 'selected' : ''}>IT (IT)</option>
+                            <option value="MECH" ${student.department === 'MECH' ? 'selected' : ''}>Mechanical (MECH)</option>
+                            <option value="CIVIL" ${student.department === 'CIVIL' ? 'selected' : ''}>Civil (CIVIL)</option>
+                            <option value="AUTO" ${student.department === 'AUTO' ? 'selected' : ''}>Automobile (AUTO)</option>
+                            <option value="SAT" ${student.department === 'SAT' ? 'selected' : ''}>Weekend (SAT)</option>
+                            <option value="SUN" ${student.department === 'SUN' ? 'selected' : ''}>Weekend (SUN)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Current Year</label>
+                        <select id="editYear" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all">
+                            <option value="FE" ${student.currentYear === 'FE' ? 'selected' : ''}>First Year (FE)</option>
+                            <option value="SE" ${student.currentYear === 'SE' ? 'selected' : ''}>Second Year (SE)</option>
+                            <option value="TE" ${student.currentYear === 'TE' ? 'selected' : ''}>Third Year (TE)</option>
+                            <option value="BE" ${student.currentYear === 'BE' ? 'selected' : ''}>Final Year (BE)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Joining Year</label>
+                        <select id="editJoiningYear" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all">
+                            <option value="2025" ${student.joiningYear === '2025' ? 'selected' : ''}>2025</option>
+                            <option value="2024" ${student.joiningYear === '2024' ? 'selected' : ''}>2024</option>
+                            <option value="2023" ${student.joiningYear === '2023' ? 'selected' : ''}>2023</option>
+                            <option value="2022" ${student.joiningYear === '2022' ? 'selected' : ''}>2022</option>
+                            <option value="2021" ${student.joiningYear === '2021' ? 'selected' : ''}>2021</option>
+                            <option value="2020" ${student.joiningYear === '2020' ? 'selected' : ''}>2020</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">GR Number</label>
+                        <input type="text" id="editGrNumber" value="${student.grNumber || ''}" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Scholar ID</label>
+                        <input type="text" id="editScholarId" value="${student.scholarId || ''}" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all" readonly class="bg-slate-50">
+                        <p class="text-xs text-slate-500 mt-1">Scholar ID cannot be changed</p>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Scholarship Type</label>
+                    <select id="editScholarship" class="w-full px-4 py-2 rounded-xl border border-slate-200 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 outline-none transition-all">
+                        <option value="SC" ${student.scholarshipType === 'SC' ? 'selected' : ''}>SC - Scheduled Caste</option>
+                        <option value="ST" ${student.scholarshipType === 'ST' ? 'selected' : ''}>ST - Scheduled Tribe</option>
+                        <option value="OBC" ${student.scholarshipType === 'OBC' ? 'selected' : ''}>OBC/SBC/VJNT</option>
+                        <option value="EBC" ${student.scholarshipType === 'EBC' ? 'selected' : ''}>EBC</option>
+                        <option value="Other" ${student.scholarshipType === 'Other' ? 'selected' : ''}>Other</option>
+                    </select>
+                </div>
+                
+                <div class="mb-4">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" id="editIsActive" ${student.isActive ? 'checked' : ''} class="w-4 h-4 text-emerald-600 rounded">
+                        <span class="text-sm font-medium text-slate-700">Account Active</span>
+                    </label>
+                </div>
+                
+                <div class="flex justify-end gap-3 mt-6">
+                    <button type="button" onclick="closeEditModal()" class="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-violet-500 text-white rounded-lg hover:bg-violet-600">Save Changes</button>
+                </div>
+            </form>
+        `;
+        
+        document.getElementById('editStudentContent').innerHTML = editHtml;
+        document.getElementById('editStudentModal').classList.remove('hidden');
+        
+    } catch (error) {
+        console.error('Error loading student for edit:', error);
+        showToast('Failed to load student data');
+    }
+}
+
+// Save student changes
+async function saveStudentChanges(event, studentId) {
+    event.preventDefault();
+    
+    const updatedData = {
+        name: document.getElementById('editName').value,
+        email: document.getElementById('editEmail').value,
+        mobileNumber: document.getElementById('editMobile').value,
+        department: document.getElementById('editDepartment').value,
+        currentYear: document.getElementById('editYear').value,
+        joiningYear: document.getElementById('editJoiningYear').value,
+        grNumber: document.getElementById('editGrNumber').value,
+        scholarshipType: document.getElementById('editScholarship').value,
+        isActive: document.getElementById('editIsActive').checked
+    };
+    
+    try {
+        await apiRequest(`/admin/students/${studentId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updatedData)
+        });
+        
+        showToast('Student record updated successfully');
+        closeEditModal();
+        loadStudentsRecords(); // Refresh the records
+        
+    } catch (error) {
+        console.error('Error updating student:', error);
+        showToast(error.message || 'Failed to update student');
+    }
+}
+
+// Close edit modal
+function closeEditModal() {
+    document.getElementById('editStudentModal').classList.add('hidden');
+}
+
+// Pagination functions
+function updatePagination() {
+    const start = filteredRecords.length > 0 ? (currentRecordsPage - 1) * recordsPerPage + 1 : 0;
+    const end = filteredRecords.length > 0 ? Math.min(currentRecordsPage * recordsPerPage, totalRecords) : 0;
+    
+    document.getElementById('recordsStart').textContent = start;
+    document.getElementById('recordsEnd').textContent = end;
+    document.getElementById('recordsTotal').textContent = totalRecords;
+    document.getElementById('currentPageDisplay').textContent = `Page ${currentRecordsPage}`;
+    
+    document.getElementById('prevPageBtn').disabled = currentRecordsPage === 1;
+    document.getElementById('nextPageBtn').disabled = currentRecordsPage * recordsPerPage >= totalRecords;
+}
+
+function prevPage() {
+    if (currentRecordsPage > 1) {
+        currentRecordsPage--;
+        loadStudentsRecords();
+    }
+}
+
+function nextPage() {
+    if (currentRecordsPage * recordsPerPage < totalRecords) {
+        currentRecordsPage++;
+        loadStudentsRecords();
     }
 }
 
@@ -1599,6 +2254,18 @@ window.cancelBooking = cancelBooking;
 window.enableRebooking = enableRebooking;
 window.showStudentDashboard = showStudentDashboard;
 window.showAdminDashboard = showAdminDashboard;
+
+// Students Records functions
+window.showStudentsRecords = showStudentsRecords;
+window.loadStudentsRecords = loadStudentsRecords;
+window.filterRecords = filterRecords;
+window.viewDocumentDetails = viewDocumentDetails;
+window.closeDocumentModal = closeDocumentModal;
+window.editStudentRecord = editStudentRecord;
+window.saveStudentChanges = saveStudentChanges;
+window.closeEditModal = closeEditModal;
+window.prevPage = prevPage;
+window.nextPage = nextPage;
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', initApp);

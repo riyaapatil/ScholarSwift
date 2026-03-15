@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 
 const Booking = require('../models/Booking');
 const User = require('../models/User');
@@ -22,8 +23,8 @@ router.get('/dashboard', protect, adminOnly, async (req, res) => {
             3: ['COMP'],
             4: ['IT'],
             5: ['MECH', 'CIVIL', 'AUTO'],
-            6: ['SAT'],  // Saturday
-            0: ['SUN']   // Sunday
+            6: ['SAT'],
+            0: ['SUN']
         };
         
         const todaysDepts = dayToDept[dayOfWeek] || [];
@@ -144,7 +145,7 @@ router.get('/queue', protect, adminOnly, async (req, res) => {
             slotTime: booking.slotTime,
             slotDate: booking.slotDate,
             status: booking.status,
-            documents: Object.fromEntries(booking.documents || new Map()),
+            documents: booking.documents instanceof Map ? Object.fromEntries(booking.documents) : (booking.documents || {}),
             canRebook: booking.canRebook,
             createdAt: booking.createdAt
         }));
@@ -176,11 +177,15 @@ router.get('/queue/:bookingId', protect, adminOnly, async (req, res) => {
         const documents = {};
         requiredDocs.forEach(docId => {
             const docName = getDocumentName(docId);
+            const docData = booking.documents instanceof Map 
+                ? booking.documents.get(docId) 
+                : (booking.documents ? booking.documents[docId] : null);
+                
             documents[docId] = {
                 name: docName,
-                status: booking.documents?.get(docId)?.status || 'pending',
-                verifiedAt: booking.documents?.get(docId)?.verifiedAt,
-                notes: booking.documents?.get(docId)?.notes
+                status: docData?.status || 'pending',
+                verifiedAt: docData?.verifiedAt,
+                notes: docData?.notes
             };
         });
 
@@ -238,13 +243,15 @@ router.put('/queue/:bookingId/verify', protect, adminOnly, async (req, res) => {
             return res.status(404).json({ message: 'Booking not found' });
         }
 
+        // Initialize documents Map if needed
+        if (!booking.documents) {
+            booking.documents = new Map();
+        }
+
         // Update document statuses
         if (documents) {
             Object.keys(documents).forEach(docId => {
                 const docStatus = documents[docId];
-                if (!booking.documents) {
-                    booking.documents = new Map();
-                }
                 booking.documents.set(docId, {
                     name: getDocumentName(docId),
                     status: docStatus,
@@ -260,7 +267,7 @@ router.put('/queue/:bookingId/verify', protect, adminOnly, async (req, res) => {
         let anyRejected = false;
 
         requiredDocs.forEach(docId => {
-            const doc = booking.documents?.get(docId);
+            const doc = booking.documents.get(docId);
             if (!doc || doc.status !== 'approved') {
                 allApproved = false;
             }
@@ -299,12 +306,18 @@ router.put('/queue/:bookingId/verify', protect, adminOnly, async (req, res) => {
 
         await booking.save();
 
+        // Convert Map to object for response
+        const documentsObj = {};
+        booking.documents.forEach((value, key) => {
+            documentsObj[key] = value;
+        });
+
         res.json({
             message: 'Verification updated successfully',
             booking: {
                 id: booking._id,
                 status: booking.status,
-                documents: Object.fromEntries(booking.documents || new Map()),
+                documents: documentsObj,
                 canRebook: booking.canRebook
             }
         });
@@ -351,7 +364,7 @@ router.get('/stats', protect, adminOnly, async (req, res) => {
         const allBookings = await Booking.find(query);
         
         const departmentStats = {};
-        const departments = ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'];
+        const departments = ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO', 'SAT', 'SUN'];
         
         departments.forEach(dept => {
             const deptBookings = allBookings.filter(b => b.department === dept);
@@ -435,9 +448,117 @@ router.put('/queue/next', protect, adminOnly, async (req, res) => {
     }
 });
 
-// @route   GET /api/admin/students/search
-// @desc    Search student profiles
-// @access  Private (Admin only)
+// ==================== STUDENT ROUTES - ORDER MATTERS! ====================
+
+// @route   GET /api/admin/students/all - THIS MUST COME FIRST (before /students/:id)
+router.get('/students/all', protect, adminOnly, async (req, res) => {
+    try {
+        const { department, page = 1, limit = 50 } = req.query;
+        
+        console.log('📥 Students all request - Query params:', { department, page, limit });
+        
+        // Build query - filter by userType
+        const query = { userType: 'student' };
+        
+        // Add department filter ONLY if it's a valid department code
+        const validDepartments = ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO', 'SAT', 'SUN'];
+        
+        if (department && department !== 'all' && department !== 'undefined' && department !== 'null') {
+            if (validDepartments.includes(department)) {
+                query.department = department;
+                console.log('🔍 Filtering by department:', department);
+            }
+        }
+        
+        console.log('📊 Final MongoDB query:', JSON.stringify(query));
+        
+        // Get students with pagination
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        
+        const students = await User.find(query)
+            .select('-password')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(parseInt(limit));
+        
+        console.log(`✅ Found ${students.length} students`);
+        
+        // Get total count for pagination
+        const total = await User.countDocuments(query);
+        
+        // For each student, get their booking history and document status
+        const studentsWithDetails = await Promise.all(students.map(async (student) => {
+            const bookings = await Booking.find({ userId: student._id })
+                .sort({ createdAt: -1 });
+            
+            // Get the most recent booking's document status
+            const latestBooking = bookings.length > 0 ? bookings[0] : null;
+            
+            // Compile document status from all bookings
+            const documentStatus = {};
+            
+            bookings.forEach(booking => {
+                if (booking.documents) {
+                    // Handle both Map and regular object
+                    let docs = booking.documents;
+                    if (docs instanceof Map) {
+                        docs = Object.fromEntries(docs);
+                    }
+                    
+                    if (typeof docs === 'object') {
+                        Object.keys(docs).forEach(key => {
+                            if (!documentStatus[key] || 
+                                (docs[key].status === 'approved' && documentStatus[key] !== 'approved')) {
+                                documentStatus[key] = docs[key].status;
+                            }
+                        });
+                    }
+                }
+            });
+            
+            return {
+                id: student._id,
+                name: student.name,
+                email: student.email,
+                mobileNumber: student.mobileNumber,
+                department: student.department,
+                currentYear: student.currentYear,
+                joiningYear: student.joiningYear,
+                grNumber: student.grNumber,
+                scholarshipType: student.scholarshipType,
+                scholarId: student.scholarId,
+                uniqueKey: student.uniqueKey,
+                isActive: student.isActive,
+                createdAt: student.createdAt,
+                lastLogin: student.lastLogin,
+                totalBookings: bookings.length,
+                latestBooking: latestBooking ? {
+                    date: latestBooking.slotDate,
+                    time: latestBooking.slotTime,
+                    token: `${latestBooking.department}-${String(latestBooking.tokenNumber).padStart(3, '0')}`,
+                    status: latestBooking.status
+                } : null,
+                documentStatus: documentStatus
+            };
+        }));
+        
+        res.json({
+            students: studentsWithDetails,
+            pagination: {
+                total,
+                page: parseInt(page),
+                limit: parseInt(limit),
+                pages: Math.ceil(total / parseInt(limit))
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Fetch all students error:', error);
+        res.status(500).json({ message: 'Server error: ' + error.message });
+    }
+});
+
+// @route   GET /api/admin/students/search - THIS COMES SECOND
 router.get('/students/search', protect, adminOnly, async (req, res) => {
     try {
         const { query } = req.query;
@@ -471,13 +592,18 @@ router.get('/students/search', protect, adminOnly, async (req, res) => {
     }
 });
 
-// @route   GET /api/admin/students/:id
-// @desc    Get student profile by ID
-// @access  Private (Admin only)
+// @route   GET /api/admin/students/:id - THIS COMES LAST
 router.get('/students/:id', protect, adminOnly, async (req, res) => {
     try {
+        const { id } = req.params;
+        
+        // Validate that id is a valid ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid student ID format' });
+        }
+
         const student = await User.findOne({
-            _id: req.params.id,
+            _id: id,
             userType: 'student'
         }).select('-password');
         
@@ -496,6 +622,50 @@ router.get('/students/:id', protect, adminOnly, async (req, res) => {
         
     } catch (error) {
         console.error('❌ Fetch student error:', error);
+        res.status(500).json({ message: 'Server error: ' + error.message });
+    }
+});
+
+// @route   PUT /api/admin/students/:id
+// @desc    Update student record
+// @access  Private (Admin only)
+router.put('/students/:id', protect, adminOnly, async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Validate that id is a valid ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid student ID format' });
+        }
+        
+        const updates = req.body;
+        
+        // Remove fields that shouldn't be updated
+        delete updates._id;
+        delete updates.id;
+        delete updates.password;
+        delete updates.scholarId;
+        delete updates.uniqueKey;
+        delete updates.userType;
+        delete updates.createdAt;
+        
+        const student = await User.findOneAndUpdate(
+            { _id: id, userType: 'student' },
+            { $set: updates },
+            { new: true, runValidators: true }
+        ).select('-password');
+        
+        if (!student) {
+            return res.status(404).json({ message: 'Student not found' });
+        }
+        
+        res.json({
+            message: 'Student updated successfully',
+            student
+        });
+        
+    } catch (error) {
+        console.error('❌ Update student error:', error);
         res.status(500).json({ message: 'Server error: ' + error.message });
     }
 });
