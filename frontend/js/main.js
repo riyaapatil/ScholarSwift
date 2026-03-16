@@ -17,8 +17,10 @@ let currentUser = null;
 let userType = 'student';
 let authMode = 'login';
 let isPaused = false;
+window.extraTimeAdded = 0;
+let extraTimeInterval = null;
 
-// Department to day mapping - Updated for Friday multiple departments
+// Department to day mapping - Updated to remove weekends
 const deptToDay = {
     'DS': { day: 1, name: 'Monday', fullName: 'Data Science' },
     'AIML': { day: 2, name: 'Tuesday', fullName: 'AI & Machine Learning' },
@@ -26,12 +28,11 @@ const deptToDay = {
     'IT': { day: 4, name: 'Thursday', fullName: 'Information Technology' },
     'MECH': { day: 5, name: 'Friday', fullName: 'Mechanical Engineering' },
     'CIVIL': { day: 5, name: 'Friday', fullName: 'Civil Engineering' },
-    'AUTO': { day: 5, name: 'Friday', fullName: 'Automobile Engineering' },
-    'SAT': { day: 6, name: 'Saturday', fullName: 'Weekend Special' },
-    'SUN': { day: 0, name: 'Sunday', fullName: 'Weekend Special' }
+    'AUTO': { day: 5, name: 'Friday', fullName: 'Automobile Engineering' }
+    // Removed SAT and SUN
 };
 
-// Department display names
+// Department display names - Updated to remove weekends
 const departmentNames = {
     'DS': 'Data Science',
     'AIML': 'AI & Machine Learning',
@@ -39,20 +40,17 @@ const departmentNames = {
     'IT': 'Information Technology',
     'MECH': 'Mechanical Engineering',
     'CIVIL': 'Civil Engineering',
-    'AUTO': 'Automobile Engineering',
-    'SAT': 'Weekend Special',
-    'SUN': 'Weekend Special'
+    'AUTO': 'Automobile Engineering'
 };
 
-// Day to departments mapping (for admin)
+// Day to departments mapping (for admin) - Updated to remove weekends
 const dayToDepts = {
     1: ['DS'],
     2: ['AIML'],
     3: ['COMP'],
     4: ['IT'],
-    5: ['MECH', 'CIVIL', 'AUTO'],
-    6: ['SAT'],
-    0: ['SUN']
+    5: ['MECH', 'CIVIL', 'AUTO']
+    // Removed Saturday and Sunday
 };
 
 // ==================== API HELPER FUNCTIONS ====================
@@ -143,7 +141,7 @@ async function initApp() {
     renderDepartmentSchedule();
     
     // Generate initial time slots
-    generateTimeSlots();
+    generateAllTimeSlots();
     setMinDate();
     applyConfig();
     
@@ -163,23 +161,61 @@ function setUserType(type) {
     userType = type;
     const studentBtn = document.getElementById('studentToggle');
     const adminBtn = document.getElementById('adminToggle');
+    const signupTab = document.getElementById('signupTab');
+    const loginTab = document.getElementById('loginTab');
     
     if (type === 'student') {
         studentBtn.className = 'flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-300 bg-emerald-500 text-white';
         adminBtn.className = 'flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-300 text-slate-400 hover:text-white';
+        
+        // Show signup tab for students
+        signupTab.classList.remove('hidden');
+        signupTab.classList.add('inline-block');
+        
+        // Ensure login tab is visible
+        loginTab.classList.remove('hidden');
+        loginTab.classList.add('inline-block');
+        
     } else {
         adminBtn.className = 'flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-300 bg-violet-500 text-white';
         studentBtn.className = 'flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-300 text-slate-400 hover:text-white';
+        
+        // Hide signup tab for admin
+        signupTab.classList.add('hidden');
+        signupTab.classList.remove('inline-block');
+        
+        // Ensure login tab is visible
+        loginTab.classList.remove('hidden');
+        loginTab.classList.add('inline-block');
+        
+        // Force login mode for admin
+        if (authMode === 'signup') {
+            setAuthMode('login');
+        }
     }
     updateFormFields();
 }
 
 function setAuthMode(mode) {
+    // Prevent admin from accessing signup
+    if (userType === 'admin' && mode === 'signup') {
+        showToast('Admin signup is disabled. Please use the login page.');
+        return;
+    }
+    
     authMode = mode;
     const loginTab = document.getElementById('loginTab');
     const signupTab = document.getElementById('signupTab');
     const submitBtn = document.getElementById('authSubmit');
     
+    // For admin, signup tab is hidden, so we don't need to update its style
+    if (userType === 'admin') {
+        loginTab.className = 'flex-1 py-2.5 rounded-md font-medium transition-all bg-white shadow text-slate-800';
+        submitBtn.textContent = 'Sign In';
+        return;
+    }
+    
+    // For students, normal tab switching
     if (mode === 'login') {
         loginTab.className = 'flex-1 py-2.5 rounded-md font-medium transition-all bg-white shadow text-slate-800';
         signupTab.className = 'flex-1 py-2.5 rounded-md font-medium transition-all text-slate-500';
@@ -201,24 +237,16 @@ function updateFormFields() {
     const passwordHint = document.getElementById('passwordHint');
     
     if (authMode === 'signup') {
+        // Only students can reach here
         nameField.classList.remove('hidden');
         mobileField.classList.remove('hidden');
+        deptField.classList.remove('hidden');
+        studentProfileFields.classList.remove('hidden');
         
-        if (userType === 'student') {
-            // Student signup - show all fields
-            deptField.classList.remove('hidden');
-            studentProfileFields.classList.remove('hidden');
-            
-            passwordInput.required = true;
-            passwordInput.placeholder = '•••••••• (min 6 characters)';
-            passwordHint.textContent = 'Password must be at least 6 characters';
-            
-        } else {
-            // Admin CANNOT sign up - show message and switch to login
-            alert('Admin signup is disabled. Please use the admin login credentials provided by the system.');
-            setAuthMode('login');
-            return;
-        }
+        passwordInput.required = true;
+        passwordInput.placeholder = '•••••••• (min 6 characters)';
+        passwordHint.textContent = 'Password must be at least 6 characters';
+        
     } else {
         // Login mode - hide all extra fields
         nameField.classList.add('hidden');
@@ -233,6 +261,7 @@ function updateFormFields() {
     }
 }
 
+// ✅ FIXED: Removed SAT and SUN from department select
 function populateDepartmentSelect() {
     const deptSelect = document.getElementById('deptSelect');
     if (!deptSelect) return;
@@ -244,9 +273,8 @@ function populateDepartmentSelect() {
         { value: 'IT', label: 'Information Technology (IT) - Thursday' },
         { value: 'MECH', label: 'Mechanical Engineering (MECH) - Friday' },
         { value: 'CIVIL', label: 'Civil Engineering (CIVIL) - Friday' },
-        { value: 'AUTO', label: 'Automobile Engineering (AUTO) - Friday' },
-        { value: 'SAT', label: 'Weekend Special (SAT) - Saturday' },
-        { value: 'SUN', label: 'Weekend Special (SUN) - Sunday' }
+        { value: 'AUTO', label: 'Automobile Engineering (AUTO) - Friday' }
+        // Removed SAT and SUN options
     ];
     
     deptSelect.innerHTML = '<option value="">Select Department</option>';
@@ -264,6 +292,7 @@ function renderDepartmentSchedule() {
     
     scheduleContainer.innerHTML = '';
     
+    // All days Monday to Friday only
     const allDays = [
         { day: 'Monday', dept: 'DS', name: 'Data Science' },
         { day: 'Tuesday', dept: 'AIML', name: 'AI & ML' },
@@ -271,9 +300,8 @@ function renderDepartmentSchedule() {
         { day: 'Thursday', dept: 'IT', name: 'Information Tech' },
         { day: 'Friday', dept: 'MECH', name: 'Mechanical' },
         { day: 'Friday', dept: 'CIVIL', name: 'Civil' },
-        { day: 'Friday', dept: 'AUTO', name: 'Automobile' },
-        { day: 'Saturday', dept: 'SAT', name: 'Weekend Special' },
-        { day: 'Sunday', dept: 'SUN', name: 'Weekend Special' }
+        { day: 'Friday', dept: 'AUTO', name: 'Automobile' }
+        // Removed Saturday and Sunday
     ];
     
     allDays.forEach(dayInfo => {
@@ -302,7 +330,7 @@ async function handleAuth(event) {
     
     const errorDiv = document.getElementById('authError');
     
-    // Prevent admin signup
+    // Admin signup is prevented by UI, but add backend check just in case
     if (authMode === 'signup' && userType === 'admin') {
         errorDiv.textContent = 'Admin signup is not allowed. Please contact the system administrator.';
         errorDiv.classList.remove('hidden');
@@ -317,6 +345,7 @@ async function handleAuth(event) {
     }
     
     if (authMode === 'signup') {
+        // Student signup validation
         if (!name) {
             errorDiv.textContent = 'Please enter your name';
             errorDiv.classList.remove('hidden');
@@ -334,43 +363,40 @@ async function handleAuth(event) {
             return;
         }
         
-        if (userType === 'student') {
-            if (!dept) {
-                errorDiv.textContent = 'Please select your department';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            if (!currentYear) {
-                errorDiv.textContent = 'Please select current year';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            if (!joiningYear) {
-                errorDiv.textContent = 'Please select joining year';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            // Fixed validation for joining year
-            if (!/^\d{4}$/.test(joiningYear)) {
-                errorDiv.textContent = 'Please select a valid joining year';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            if (!grNumber) {
-                errorDiv.textContent = 'Please enter GR number';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            if (!scholarshipType) {
-                errorDiv.textContent = 'Please select scholarship type';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-            if (password.length < 6) {
-                errorDiv.textContent = 'Password must be at least 6 characters';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
+        if (!dept) {
+            errorDiv.textContent = 'Please select your department';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (!currentYear) {
+            errorDiv.textContent = 'Please select current year';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (!joiningYear) {
+            errorDiv.textContent = 'Please select joining year';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (!/^\d{4}$/.test(joiningYear)) {
+            errorDiv.textContent = 'Please select a valid joining year';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (!grNumber) {
+            errorDiv.textContent = 'Please enter GR number';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (!scholarshipType) {
+            errorDiv.textContent = 'Please select scholarship type';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        if (password.length < 6) {
+            errorDiv.textContent = 'Password must be at least 6 characters';
+            errorDiv.classList.remove('hidden');
+            return;
         }
     } else {
         // Login mode - password required
@@ -387,10 +413,11 @@ async function handleAuth(event) {
         let response;
         
         if (authMode === 'signup') {
+            // Only students can sign up
             const userData = {
                 name,
                 email,
-                userType: 'student', // Force to student
+                userType: 'student',
                 mobileNumber,
                 password,
                 department: dept,
@@ -448,7 +475,6 @@ function logout() {
 }
 
 // ==================== STUDENT DASHBOARD FUNCTIONS ====================
-
 async function showStudentDashboard() {
     log('Showing student dashboard');
     
@@ -457,9 +483,19 @@ async function showStudentDashboard() {
         document.getElementById('authPage').classList.add('hidden');
         document.getElementById('studentDashboard').classList.remove('hidden');
         
-        // Update header info
+        // Update header info - Show Scholar ID instead of KEY
         document.getElementById('studentName').textContent = currentUser.name;
-        document.getElementById('studentKey').textContent = `KEY: ${currentUser.uniqueKey}`;
+        
+        // Show Scholar ID instead of uniqueKey
+        const scholarIdEl = document.getElementById('studentScholarId');
+        if (scholarIdEl) {
+            if (currentUser.scholarId) {
+                scholarIdEl.textContent = `Scholar ID: ${currentUser.scholarId}`;
+            } else {
+                // Fallback if scholarId is not available
+                scholarIdEl.textContent = `ID: ${currentUser.uniqueKey || 'Not assigned'}`;
+            }
+        }
         
         // Update department booking day
         const deptInfo = deptToDay[currentUser.department];
@@ -475,18 +511,30 @@ async function showStudentDashboard() {
         // Add event listeners
         document.getElementById('slotDate').addEventListener('change', loadAvailableSlots);
         
-        // Set up auto-refresh every 30 seconds
+        // Clear any existing refresh interval
         if (window.studentRefreshInterval) {
             clearInterval(window.studentRefreshInterval);
+            console.log('🔄 Cleared existing refresh interval');
         }
+        
+        // Set up auto-refresh every 30 seconds
         window.studentRefreshInterval = setInterval(async () => {
             if (currentUser && currentUser.userType === 'student') {
-                log('Auto-refreshing student dashboard...');
+                console.log('🔄 Auto-refreshing student dashboard at', new Date().toLocaleTimeString());
                 await updateStudentDashboard();
             }
         }, 30000);
         
-        log('Student dashboard shown successfully');
+        // Also refresh when the page becomes visible again
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && currentUser && currentUser.userType === 'student') {
+                console.log('👁️ Page became visible, refreshing dashboard');
+                updateStudentDashboard();
+            }
+        });
+        
+        log('Student dashboard shown successfully with auto-refresh every 30 seconds');
+        
     } catch (error) {
         console.error('Error showing student dashboard:', error);
         showToast('Error loading dashboard');
@@ -502,10 +550,15 @@ function restrictDateToDepartmentDay() {
     const dayOfWeek = targetDate.getDay();
     const daysUntilTarget = (deptInfo.day - dayOfWeek + 7) % 7;
     
-    if (daysUntilTarget === 0 && today.getHours() >= 17) {
+    // If today is weekend (0 or 6), start from next week
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+        targetDate.setDate(targetDate.getDate() + ((deptInfo.day - dayOfWeek + 7) % 7));
+    } else if (daysUntilTarget === 0 && today.getHours() >= 17 && today.getMinutes() >= 30) {
+        // If today is booking day but after 5:30 PM, move to next week
         targetDate.setDate(targetDate.getDate() + 7);
+    } else {
+        targetDate.setDate(targetDate.getDate() + daysUntilTarget);
     }
-    targetDate.setDate(targetDate.getDate() + daysUntilTarget);
     
     dateInput.value = targetDate.toISOString().split('T')[0];
     dateInput.min = targetDate.toISOString().split('T')[0];
@@ -515,6 +568,189 @@ function restrictDateToDepartmentDay() {
     dateInput.max = maxDate.toISOString().split('T')[0];
 }
 
+// ==================== TIME SLOT FUNCTIONS ====================
+function generateTimeSlots() {
+    const select = document.getElementById('slotTime');
+    if (!select) {
+        console.error('❌ Slot time select element not found');
+        return;
+    }
+    
+    select.innerHTML = '<option value="">Select a time slot</option>';
+    
+    // Get current time
+    const now = new Date();
+    const currentMinutesTotal = now.getHours() * 60 + now.getMinutes();
+    
+    let hours = 9;
+    let minutes = 0; // Start at 9:00 AM
+    const endHours = 17;
+    const endMinutes = 30; // End at 5:30 PM
+    const breakStart = 13 * 60; // 1:00 PM in minutes
+    const breakEnd = 14 * 60;    // 2:00 PM in minutes
+    
+    let slotCount = 0;
+    let skippedCount = 0;
+    
+    while (hours < endHours || (hours === endHours && minutes < endMinutes)) {
+        const slotMinutes = hours * 60 + minutes;
+        
+        // Skip break period
+        if (slotMinutes >= breakStart && slotMinutes < breakEnd) {
+            // Jump to 2:00 PM
+            hours = 14;
+            minutes = 0;
+            continue;
+        }
+        
+        // Format time
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours > 12 ? hours - 12 : hours;
+        const displayHoursFormatted = displayHours === 0 ? 12 : displayHours;
+        const timeStr = `${displayHoursFormatted}:${String(minutes).padStart(2, '0')} ${ampm}`;
+        
+        // Check if slot is in the future (for today)
+        const date = document.getElementById('slotDate').value;
+        const today = new Date().toISOString().split('T')[0];
+        const isToday = date === today;
+        
+        if (isToday && slotMinutes <= currentMinutesTotal) {
+            // Skip past slots for today
+            skippedCount++;
+        } else {
+            const option = document.createElement('option');
+            option.value = timeStr;
+            option.textContent = timeStr;
+            select.appendChild(option);
+            slotCount++;
+        }
+        
+        // Add 7 minutes
+        minutes += 7;
+        if (minutes >= 60) {
+            hours++;
+            minutes = minutes % 60;
+        }
+    }
+    
+    console.log(`✅ Generated ${slotCount} time slots (${skippedCount} past slots skipped)`);
+    
+    // If no future slots available
+    if (slotCount === 0) {
+        const option = document.createElement('option');
+        option.value = "";
+        option.textContent = "No future slots available today";
+        option.disabled = true;
+        select.appendChild(option);
+        showToast('No more slots available for today');
+    }
+}
+
+// Generate all slots without time check (for future dates)
+function generateAllTimeSlots() {
+    const select = document.getElementById('slotTime');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">Select a time slot</option>';
+    
+    let hours = 9;
+    let minutes = 0; // Start at 9:00 AM
+    const endHours = 17;
+    const endMinutes = 30; // End at 5:30 PM
+    const breakStart = 13 * 60;
+    const breakEnd = 14 * 60;
+    
+    while (hours < endHours || (hours === endHours && minutes < endMinutes)) {
+        const currentMinutes = hours * 60 + minutes;
+        
+        if (currentMinutes >= breakStart && currentMinutes < breakEnd) {
+            hours = 14;
+            minutes = 0;
+            continue;
+        }
+        
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours > 12 ? hours - 12 : hours;
+        const displayHoursFormatted = displayHours === 0 ? 12 : displayHours;
+        const timeStr = `${displayHoursFormatted}:${String(minutes).padStart(2, '0')} ${ampm}`;
+        
+        const option = document.createElement('option');
+        option.value = timeStr;
+        option.textContent = timeStr;
+        select.appendChild(option);
+        
+        minutes += 7;
+        if (minutes >= 60) {
+            hours++;
+            minutes = minutes % 60;
+        }
+    }
+}
+
+async function loadAvailableSlots() {
+    const date = document.getElementById('slotDate').value;
+    const select = document.getElementById('slotTime');
+    
+    if (!date || !select) return;
+    
+    try {
+        // Check if selected date is today
+        const today = new Date().toISOString().split('T')[0];
+        const isToday = date === today;
+        
+        // If it's today, generate slots with future check
+        if (isToday) {
+            generateTimeSlots();
+        } else {
+            // For future dates, generate all slots
+            generateAllTimeSlots();
+        }
+        
+        // Get booked slots from backend
+        const response = await apiRequest(`/bookings/available-slots?date=${date}`);
+        
+        // Mark booked slots as disabled
+        let bookedCount = 0;
+        Array.from(select.options).forEach(option => {
+            if (option.value) {
+                const slot = response.slots.find(s => s.time === option.value);
+                // Only mark as booked if it's actually booked (not just past)
+                if (slot && !slot.available) {
+                    option.disabled = true;
+                    option.textContent = `${option.value} - Booked`;
+                    option.classList.add('text-slate-400', 'line-through');
+                    bookedCount++;
+                }
+            }
+        });
+        
+        const totalSlots = select.options.length - 1; // -1 for default option
+        console.log(`📊 Available: ${totalSlots - bookedCount}/${totalSlots} slots`);
+        
+        if (bookedCount === totalSlots) {
+            showToast('No slots available for this date');
+        }
+        
+    } catch (error) {
+        console.error('❌ Failed to load slots:', error);
+        // If API fails, at least show slots
+        if (new Date(date).toISOString().split('T')[0] === new Date().toISOString().split('T')[0]) {
+            generateTimeSlots();
+        } else {
+            generateAllTimeSlots();
+        }
+        showToast('Using default slots - booking availability may not be accurate');
+    }
+}
+
+function setMinDate() {
+    const dateInput = document.getElementById('slotDate');
+    if (dateInput) {
+        dateInput.min = new Date().toISOString().split('T')[0];
+    }
+}
+
+// ==================== UPDATE STUDENT DASHBOARD ====================
 async function updateStudentDashboard() {
     log('Updating student dashboard...');
     
@@ -586,9 +822,23 @@ async function updateStudentDashboard() {
                 log('Updated studentsAhead to:', positionResponse.studentsBefore);
             }
             
+            // Calculate dynamic wait time based on students ahead and extra time
             if (elements.waitTime) {
-                elements.waitTime.textContent = `${positionResponse.estimatedWaitTime || 0} min`;
-                log('Updated waitTime to:', `${positionResponse.estimatedWaitTime} min`);
+                // Base time: 7 minutes per student ahead
+                const baseWaitTime = (positionResponse.studentsBefore || 0) * 7;
+                
+                // Add any extra time that might have been added by admin
+                const extraTime = window.extraTimeAdded || 0;
+                const totalWaitTime = baseWaitTime + extraTime;
+                
+                elements.waitTime.textContent = `${totalWaitTime} min`;
+                
+                // Store data attributes for reference
+                elements.waitTime.dataset.baseWait = baseWaitTime;
+                elements.waitTime.dataset.extraTime = extraTime;
+                elements.waitTime.dataset.totalWait = totalWaitTime;
+                
+                log('Updated waitTime to:', `${totalWaitTime} min (${positionResponse.studentsBefore} students × 7 min + ${extraTime} min extra)`);
             }
             
             const status = positionResponse.status;
@@ -648,6 +898,15 @@ async function updateStudentDashboard() {
                     if (elements.studentsBeforeYou) {
                         elements.studentsBeforeYou.textContent = positionResponse.studentsBefore;
                     }
+                    
+                    // Update reminder banner with estimated time
+                    const reminderText = elements.reminderBanner.querySelector('p:last-child');
+                    if (reminderText) {
+                        const extraTime = window.extraTimeAdded || 0;
+                        const waitTime = (positionResponse.studentsBefore * 7) + extraTime;
+                        reminderText.innerHTML = `Only <span id="studentsBeforeYou" class="font-bold">${positionResponse.studentsBefore}</span> students before you. 
+                                                 Estimated wait: <span class="font-bold text-amber-700">${waitTime}</span> minutes. Please be ready with your documents.`;
+                    }
                 }
             }
             else if (status === 'current') {
@@ -672,36 +931,64 @@ async function updateStudentDashboard() {
             if (elements.studentsAhead) elements.studentsAhead.textContent = '0';
             if (elements.waitTime) elements.waitTime.textContent = '--';
             
-            // STUDENTS WITH NO BOOKING CAN BOOK
-            if (elements.slotDate) elements.slotDate.disabled = false;
-            if (elements.slotTime) elements.slotTime.disabled = false;
-            if (elements.bookSlotBtn) {
-                elements.bookSlotBtn.disabled = false;
-                elements.bookSlotBtn.innerHTML = 'Book Slot';
-                elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            // Check if user has ever been verified (even if no active booking)
+            try {
+                const checkResponse = await apiRequest('/bookings/my-bookings');
+                const verifiedBooking = checkResponse.bookings.find(b => b.status === 'verified');
+                
+                if (verifiedBooking) {
+                    console.log('User has been verified before, disabling booking');
+                    if (elements.slotDate) elements.slotDate.disabled = true;
+                    if (elements.slotTime) elements.slotTime.disabled = true;
+                    if (elements.bookSlotBtn) {
+                        elements.bookSlotBtn.disabled = true;
+                        elements.bookSlotBtn.innerHTML = 'Already Verified';
+                        elements.bookSlotBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    }
+                    if (elements.verifiedMsg) {
+                        elements.verifiedMsg.classList.remove('hidden');
+                    }
+                } else {
+                    // STUDENTS WITH NO BOOKING AND NOT VERIFIED CAN BOOK
+                    if (elements.slotDate) elements.slotDate.disabled = false;
+                    if (elements.slotTime) elements.slotTime.disabled = false;
+                    if (elements.bookSlotBtn) {
+                        elements.bookSlotBtn.disabled = false;
+                        elements.bookSlotBtn.innerHTML = 'Book Slot';
+                        elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    }
+                }
+            } catch (error) {
+                console.log('Error checking verification history');
+                // Default to allowing booking
+                if (elements.slotDate) elements.slotDate.disabled = false;
+                if (elements.slotTime) elements.slotTime.disabled = false;
+                if (elements.bookSlotBtn) {
+                    elements.bookSlotBtn.disabled = false;
+                    elements.bookSlotBtn.innerHTML = 'Book Slot';
+                    elements.bookSlotBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
             }
         }
         
-        // FORCE REPAINT - Force the browser to update the display
+        // Force repaint to ensure display updates
         setTimeout(() => {
-            // Force a reflow on the specific elements
+            // Force a reflow on the wait time element
+            if (elements.waitTime) {
+                const currentText = elements.waitTime.textContent;
+                elements.waitTime.textContent = currentText; // Force reflow
+                elements.waitTime.style.transform = 'translateZ(0)';
+                setTimeout(() => { elements.waitTime.style.transform = ''; }, 10);
+            }
+            
+            // Force a reflow on all key elements
             ['yourToken', 'studentsAhead', 'waitTime', 'currentToken'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
                     // Reading offsetHeight forces a reflow
                     const forceReflow = el.offsetHeight;
-                    // Tiny style change and revert
-                    el.style.transform = 'translateZ(0)';
-                    setTimeout(() => { el.style.transform = ''; }, 10);
                 }
             });
-            
-            // Also force repaint on the parent container
-            const container = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-4');
-            if (container) {
-                container.style.opacity = '0.99';
-                setTimeout(() => { container.style.opacity = '1'; }, 10);
-            }
             
             log('Force repaint completed');
         }, 50);
@@ -709,83 +996,6 @@ async function updateStudentDashboard() {
     } catch (error) {
         console.error('Failed to update student dashboard:', error);
         showToast('Error updating dashboard');
-    }
-}
-
-// ==================== TIME SLOT FUNCTIONS ====================
-function generateTimeSlots() {
-    const select = document.getElementById('slotTime');
-    if (!select) {
-        console.error('❌ Slot time select element not found');
-        return;
-    }
-    
-    select.innerHTML = '<option value="">Select a time slot</option>';
-    
-    let hours = 9;
-    let minutes = 30;
-    const endHours = 17;
-    const breakStart = 13 * 60;
-    const breakEnd = 14 * 60;
-    
-    while (hours < endHours || (hours === endHours && minutes === 0)) {
-        const currentMinutes = hours * 60 + minutes;
-        
-        if (currentMinutes >= breakStart && currentMinutes < breakEnd) {
-            hours = 14;
-            minutes = 0;
-            continue;
-        }
-        
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        const displayHours = hours > 12 ? hours - 12 : hours;
-        const displayHoursFormatted = displayHours === 0 ? 12 : displayHours;
-        const timeStr = `${displayHoursFormatted}:${String(minutes).padStart(2, '0')} ${ampm}`;
-        
-        const option = document.createElement('option');
-        option.value = timeStr;
-        option.textContent = timeStr;
-        select.appendChild(option);
-        
-        minutes += 7;
-        if (minutes >= 60) {
-            hours++;
-            minutes = minutes % 60;
-        }
-    }
-}
-
-async function loadAvailableSlots() {
-    const date = document.getElementById('slotDate').value;
-    const select = document.getElementById('slotTime');
-    
-    if (!date || !select) return;
-    
-    try {
-        generateTimeSlots();
-        
-        const response = await apiRequest(`/bookings/available-slots?date=${date}`);
-        
-        Array.from(select.options).forEach(option => {
-            if (option.value) {
-                const slot = response.slots.find(s => s.time === option.value);
-                if (slot && !slot.available) {
-                    option.disabled = true;
-                    option.textContent = `${option.value} - Booked`;
-                    option.classList.add('text-slate-400', 'line-through');
-                }
-            }
-        });
-    } catch (error) {
-        console.error('❌ Failed to load slots:', error);
-        showToast('Using default slots - booking availability may not be accurate');
-    }
-}
-
-function setMinDate() {
-    const dateInput = document.getElementById('slotDate');
-    if (dateInput) {
-        dateInput.min = new Date().toISOString().split('T')[0];
     }
 }
 
@@ -799,18 +1009,54 @@ async function bookSlot() {
         return;
     }
     
-    // Check if user is already verified
+    // CRITICAL: Check if user is already verified
     try {
+        console.log('Checking if user is verified...');
         const checkResponse = await apiRequest('/bookings/my-bookings');
-        const today = new Date().toISOString().split('T')[0];
-        const existingBooking = checkResponse.bookings.find(b => b.slotDate === today);
         
-        if (existingBooking && existingBooking.status === 'verified') {
+        // Check if user has any verified booking (ever, not just today)
+        const verifiedBooking = checkResponse.bookings.find(b => b.status === 'verified');
+        
+        if (verifiedBooking) {
+            console.log('❌ User is already verified:', verifiedBooking);
             showToast('You are already verified and cannot book another slot');
+            
+            // Disable booking form
+            document.getElementById('slotDate').disabled = true;
+            document.getElementById('slotTime').disabled = true;
+            document.getElementById('bookSlotBtn').disabled = true;
+            document.getElementById('bookSlotBtn').innerHTML = 'Already Verified';
+            document.getElementById('bookSlotBtn').classList.add('opacity-50', 'cursor-not-allowed');
+            
+            // Show verification message
+            document.getElementById('verificationDoneMessage')?.classList.remove('hidden');
+            document.getElementById('pendingMessage')?.classList.add('hidden');
+            document.getElementById('rejectedMessage')?.classList.add('hidden');
+            
             return;
         }
     } catch (error) {
-        console.log('Error checking verification status');
+        console.log('Error checking verification status:', error);
+    }
+    
+    // Also check if user has a pending booking for today
+    try {
+        const checkResponse = await apiRequest('/bookings/my-bookings');
+        const today = new Date().toISOString().split('T')[0];
+        const todaysBooking = checkResponse.bookings.find(b => b.slotDate === today);
+        
+        if (todaysBooking) {
+            if (todaysBooking.status === 'pending') {
+                showToast('You already have a pending booking for today');
+            } else if (todaysBooking.status === 'current') {
+                showToast('You are currently being served');
+            } else if (todaysBooking.status === 'verified') {
+                showToast('You are already verified');
+            }
+            return;
+        }
+    } catch (error) {
+        console.log('Error checking today\'s booking');
     }
     
     const btn = document.getElementById('bookSlotBtn');
@@ -823,10 +1069,15 @@ async function bookSlot() {
             body: JSON.stringify({ slotDate: date, slotTime: time })
         });
         
+        console.log('✅ Booking response:', response);
+        
         // Show booked slot details
         document.getElementById('yourToken').textContent = response.booking.token;
-        document.getElementById('waitTime').textContent = `${response.booking.estimatedWaitTime} min`;
         document.getElementById('studentsAhead').textContent = response.booking.studentsBefore || 0;
+        
+        // Calculate and show estimated wait time
+        const baseWaitTime = (response.booking.studentsBefore || 0) * 7;
+        document.getElementById('waitTime').textContent = `${baseWaitTime} min`;
         
         // Show booking confirmation
         const confirmationDiv = document.getElementById('bookingConfirmation');
@@ -837,7 +1088,8 @@ async function bookSlot() {
                 Token: ${response.booking.token}<br>
                 Time: ${time}<br>
                 Date: ${new Date(date).toLocaleDateString()}<br>
-                Students Ahead: ${response.booking.studentsBefore || 0}`;
+                Students Ahead: ${response.booking.studentsBefore || 0}<br>
+                Estimated Wait: ${baseWaitTime} minutes`;
             
             setTimeout(() => {
                 confirmationDiv.classList.add('hidden');
@@ -860,6 +1112,7 @@ async function bookSlot() {
         await updateStudentDashboard();
         
     } catch (error) {
+        console.error('❌ Booking error:', error);
         showToast(error.message || 'Failed to book slot');
         // Re-enable button on error
         btn.disabled = false;
@@ -910,6 +1163,104 @@ function enableRebooking() {
     document.getElementById('bookSlotBtn').innerHTML = 'Book Slot';
     document.getElementById('cancelBookingContainer')?.classList.add('hidden');
     showToast('You can now book a new slot');
+}
+
+// ==================== CHECK EXISTING BOOKING ====================
+async function checkExistingBooking() {
+    try {
+        const response = await apiRequest('/bookings/my-bookings');
+        const today = new Date().toISOString().split('T')[0];
+        const todaysBooking = response.bookings.find(b => b.slotDate === today);
+        
+        // Check if user has ever been verified
+        const everVerified = response.bookings.some(b => b.status === 'verified');
+        
+        if (everVerified) {
+            // Show verified message and disable booking permanently
+            document.getElementById('verificationDoneMessage').classList.remove('hidden');
+            document.getElementById('pendingMessage').classList.add('hidden');
+            document.getElementById('rejectedMessage').classList.add('hidden');
+            document.getElementById('cancelBookingContainer').classList.add('hidden');
+            
+            document.getElementById('slotDate').disabled = true;
+            document.getElementById('slotTime').disabled = true;
+            document.getElementById('bookSlotBtn').disabled = true;
+            document.getElementById('bookSlotBtn').innerHTML = 'Already Verified';
+            document.getElementById('bookSlotBtn').classList.add('opacity-50', 'cursor-not-allowed');
+            
+            return true;
+        }
+        
+        if (todaysBooking) {
+            document.getElementById('yourToken').textContent = todaysBooking.token;
+            document.getElementById('waitTime').textContent = `${todaysBooking.estimatedWaitTime} min`;
+            
+            if (todaysBooking.status === 'verified') {
+                document.getElementById('verificationDoneMessage').classList.remove('hidden');
+                document.getElementById('pendingMessage').classList.add('hidden');
+                document.getElementById('rejectedMessage').classList.add('hidden');
+                document.getElementById('cancelBookingContainer').classList.add('hidden');
+                
+                document.getElementById('slotDate').disabled = true;
+                document.getElementById('slotTime').disabled = true;
+                document.getElementById('bookSlotBtn').disabled = true;
+                document.getElementById('bookSlotBtn').innerHTML = 'Already Verified';
+                document.getElementById('bookSlotBtn').classList.add('opacity-50', 'cursor-not-allowed');
+            } 
+            else if (todaysBooking.status === 'rejected') {
+                document.getElementById('rejectedMessage').classList.remove('hidden');
+                document.getElementById('verificationDoneMessage').classList.add('hidden');
+                document.getElementById('pendingMessage').classList.add('hidden');
+                document.getElementById('cancelBookingContainer').classList.add('hidden');
+                
+                document.getElementById('slotDate').disabled = false;
+                document.getElementById('slotTime').disabled = false;
+                document.getElementById('bookSlotBtn').disabled = false;
+                document.getElementById('bookSlotBtn').innerHTML = 'Book Slot';
+                document.getElementById('bookSlotBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+            } 
+            else if (todaysBooking.status === 'pending') {
+                document.getElementById('pendingMessage').classList.remove('hidden');
+                document.getElementById('verificationDoneMessage').classList.add('hidden');
+                document.getElementById('rejectedMessage').classList.add('hidden');
+                document.getElementById('cancelBookingContainer').classList.remove('hidden');
+                
+                document.getElementById('slotDate').disabled = true;
+                document.getElementById('slotTime').disabled = true;
+                document.getElementById('bookSlotBtn').disabled = true;
+                document.getElementById('bookSlotBtn').innerHTML = 'Already Booked';
+                document.getElementById('bookSlotBtn').classList.add('opacity-50', 'cursor-not-allowed');
+                
+                const tokenNumber = parseInt(todaysBooking.token.split('-')[1]);
+                if (tokenNumber <= 3) {
+                    document.getElementById('reminderBanner').classList.remove('hidden');
+                    document.getElementById('studentsBeforeYou').textContent = tokenNumber - 1;
+                }
+            }
+            
+            return true;
+        } else {
+            // Enable booking form only if never verified
+            if (!everVerified) {
+                document.getElementById('slotDate').disabled = false;
+                document.getElementById('slotTime').disabled = false;
+                document.getElementById('bookSlotBtn').disabled = false;
+                document.getElementById('bookSlotBtn').innerHTML = 'Book Slot';
+                document.getElementById('bookSlotBtn').classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+            
+            document.getElementById('verificationDoneMessage').classList.add('hidden');
+            document.getElementById('pendingMessage').classList.add('hidden');
+            document.getElementById('rejectedMessage').classList.add('hidden');
+            document.getElementById('reminderBanner').classList.add('hidden');
+            document.getElementById('cancelBookingContainer').classList.add('hidden');
+            
+            return false;
+        }
+    } catch (error) {
+        console.error('Failed to check existing booking:', error);
+        return false;
+    }
 }
 
 // ==================== STUDENT PROFILE FUNCTIONS ====================
@@ -978,6 +1329,7 @@ async function showStudentProfileModal() {
                         <div class="flex justify-between"><span class="text-slate-500">GR Number:</span><span class="font-medium">${currentUser.grNumber || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Scholarship:</span><span class="font-medium">${currentUser.scholarshipType || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Scholar ID:</span><span class="font-medium">${currentUser.scholarId || 'N/A'}</span></div>
+                        <div class="flex justify-between"><span class="text-slate-500">KEY:</span><span class="font-medium">${currentUser.uniqueKey || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Status:</span><span class="font-medium text-emerald-600">Active</span></div>
                     </div>
                 </div>
@@ -1026,6 +1378,53 @@ async function showStudentProfileModal() {
 
 function closeStudentProfileModal() {
     document.getElementById('studentProfileModal')?.classList.add('hidden');
+}
+
+// ==================== +5 MINUTE FUNCTION ====================
+function addExtraTime() {
+    // Add 5 minutes to extra time counter
+    window.extraTimeAdded += 5;
+    
+    // Update wait time for all pending students
+    if (currentUser?.userType === 'student') {
+        // If student is logged in, update their dashboard
+        updateStudentDashboard();
+    }
+    
+    // Update the extra time display in admin panel
+    updateExtraTimeDisplay();
+    
+    showToast(`➕ Added 5 minutes extra time for all students. Total extra: ${window.extraTimeAdded} min`);
+    
+    // Clear any existing interval and set a new one to reset after 30 minutes
+    if (extraTimeInterval) {
+        clearInterval(extraTimeInterval);
+    }
+    
+    // Reset extra time after 30 minutes (if no new extra time added)
+    extraTimeInterval = setTimeout(() => {
+        window.extraTimeAdded = 0;
+        if (currentUser?.userType === 'student') {
+            updateStudentDashboard();
+        }
+        updateExtraTimeDisplay();
+        showToast('Extra time period ended. Wait times reset to normal.');
+    }, 30 * 60 * 1000); // 30 minutes
+}
+
+// Update extra time display in admin panel
+function updateExtraTimeDisplay() {
+    const extraTimeDisplay = document.getElementById('extraTimeDisplay');
+    const extraTimeValue = document.getElementById('extraTimeValue');
+    
+    if (extraTimeDisplay && extraTimeValue) {
+        if (window.extraTimeAdded > 0) {
+            extraTimeValue.textContent = window.extraTimeAdded;
+            extraTimeDisplay.classList.remove('hidden');
+        } else {
+            extraTimeDisplay.classList.add('hidden');
+        }
+    }
 }
 
 // ==================== DOCUMENT CHECKLIST FUNCTIONS ====================
@@ -1093,22 +1492,35 @@ function updateDocumentChecklist() {
 
 // ==================== ADMIN DASHBOARD FUNCTIONS ====================
 async function showAdminDashboard() {
+    console.log('👤 Showing admin dashboard for:', currentUser?.email);
+    
     document.getElementById('authPage').classList.add('hidden');
     document.getElementById('adminDashboard').classList.remove('hidden');
     document.getElementById('adminName').textContent = currentUser.name;
     
-    await loadAdminDashboard();
-    await renderAdminTable();
-    setupStudentSearch();
-    await loadOngoingStudent();
-    
-    setInterval(async () => {
-        if (currentUser?.userType === 'admin') {
-            await loadAdminDashboard();
-            await renderAdminTable();
-            await loadOngoingStudent();
+    try {
+        await loadAdminDashboard();
+        await renderAdminTable();
+        setupStudentSearch();
+        await loadOngoingStudent();
+        
+        // Refresh data every 30 seconds
+        if (window.adminRefreshInterval) {
+            clearInterval(window.adminRefreshInterval);
         }
-    }, 30000);
+        window.adminRefreshInterval = setInterval(async () => {
+            if (currentUser?.userType === 'admin') {
+                console.log('🔄 Auto-refreshing admin dashboard...');
+                await loadAdminDashboard();
+                await renderAdminTable();
+                await loadOngoingStudent();
+            }
+        }, 30000);
+        
+    } catch (error) {
+        console.error('❌ Error loading admin dashboard:', error);
+        showToast('Error loading admin dashboard');
+    }
 }
 
 async function loadAdminDashboard() {
@@ -1204,6 +1616,7 @@ async function loadAdminDashboard() {
     }
 }
 
+// Render admin table
 async function renderAdminTable() {
     const tbody = document.getElementById('queueTableBody');
     if (!tbody) return;
@@ -1211,14 +1624,16 @@ async function renderAdminTable() {
     tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-slate-500">Loading queue data...</td></tr>';
     
     try {
+        console.log('📋 Fetching admin queue...');
         const response = await apiRequest('/admin/queue');
+        console.log('Queue response:', response);
         
-        if (response.queue.length === 0) {
+        if (!response.queue || response.queue.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-slate-500">No students in queue for today.</td></tr>';
             return;
         }
         
-        tbody.innerHTML = '';
+        tbody.innerHTML = ''; // Clear loading message
         
         response.queue.forEach(booking => {
             const row = document.createElement('tr');
@@ -1254,21 +1669,38 @@ async function renderAdminTable() {
             }
             
             row.innerHTML = `
-                <td class="px-4 py-3"><span class="font-mono font-bold ${booking.status === 'current' ? 'text-emerald-600' : 'text-slate-800'}">${booking.token}</span></td>
-                <td class="px-4 py-3"><div class="font-medium text-slate-800">${booking.name}</div></td>
-                <td class="px-4 py-3"><span class="px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs font-medium">${booking.department}</span></td>
-                <td class="px-4 py-3"><span class="text-xs font-mono">${booking.scholarId || 'N/A'}</span></td>
-                <td class="px-4 py-3"><span class="text-xs">${booking.grNumber || 'N/A'}</span></td>
-                <td class="px-4 py-3"><span class="text-xs">${booking.currentYear || 'N/A'}</span></td>
-                <td class="px-4 py-3"><span class="text-sm text-slate-600">${booking.slotTime}</span></td>
+                <td class="px-4 py-3">
+                    <span class="font-mono font-bold ${booking.status === 'current' ? 'text-emerald-600' : 'text-slate-800'}">${booking.token}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="font-medium text-slate-800">${booking.name}</div>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs font-medium">${booking.department}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="text-xs font-mono">${booking.scholarId || 'N/A'}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="text-xs">${booking.grNumber || 'N/A'}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="text-xs">${booking.currentYear || 'N/A'}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="text-sm text-slate-600">${booking.slotTime}</span>
+                </td>
                 <td class="px-4 py-3">${statusBadge}</td>
                 <td class="px-4 py-3">${actionBtns}</td>
             `;
             
             tbody.appendChild(row);
         });
+        
+        console.log(`✅ Rendered ${response.queue.length} bookings in admin table`);
+        
     } catch (error) {
-        console.error('Failed to render queue:', error);
+        console.error('❌ Failed to render queue:', error);
         tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-slate-500">Failed to load queue data. Please try again.</td></tr>';
     }
 }
@@ -1279,8 +1711,12 @@ async function loadOngoingStudent() {
         const today = new Date().toISOString().split('T')[0];
         const dayOfWeek = new Date().getDay();
         const dayToDept = {
-            1: 'DS', 2: 'AIML', 3: 'COMP', 4: 'IT',
-            5: ['MECH', 'CIVIL', 'AUTO'], 6: 'SAT', 0: 'SUN'
+            1: 'DS', 
+            2: 'AIML', 
+            3: 'COMP', 
+            4: 'IT',
+            5: ['MECH', 'CIVIL', 'AUTO']
+            // Removed 6: 'SAT', 0: 'SUN'
         };
         
         const departments = Array.isArray(dayToDept[dayOfWeek]) 
@@ -1323,6 +1759,10 @@ function displayOngoingStudent(booking) {
     
     const initials = booking.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
     
+    // Calculate base wait time (students before × 7)
+    const baseWaitTime = (booking.studentsBefore || 0) * 7;
+    const totalWaitTime = baseWaitTime + (window.extraTimeAdded || 0);
+    
     container.innerHTML = `
         <div class="flex items-start gap-6">
             <div class="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg">
@@ -1347,6 +1787,10 @@ function displayOngoingStudent(booking) {
                         <p class="text-sm text-slate-600"><span class="font-medium">Time:</span> ${booking.slotTime}</p>
                         <p class="text-sm text-slate-600"><span class="font-medium">Date:</span> ${new Date(booking.slotDate).toLocaleDateString()}</p>
                         <p class="text-sm text-slate-600"><span class="font-medium">Scholarship:</span> ${booking.scholarshipType || 'N/A'}</p>
+                        <p class="text-sm text-slate-600 mt-2"><span class="font-medium">Est. Wait Time:</span> 
+                            <span class="wait-time-display font-bold text-emerald-600" data-base-wait="${baseWaitTime}">${totalWaitTime}</span> min
+                            ${window.extraTimeAdded > 0 ? `<span class="extra-time-badge text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-2">+${window.extraTimeAdded} extra</span>` : ''}
+                        </p>
                     </div>
                 </div>
             </div>
@@ -1586,6 +2030,7 @@ async function viewStudentProfile(studentId) {
                         <div class="flex justify-between"><span class="text-slate-500">GR Number:</span><span class="font-medium">${student.grNumber || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Scholarship:</span><span class="font-medium">${student.scholarshipType || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Scholar ID:</span><span class="font-medium">${student.scholarId || 'N/A'}</span></div>
+                        <div class="flex justify-between"><span class="text-slate-500">KEY:</span><span class="font-medium">${student.uniqueKey || 'N/A'}</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">Status:</span><span class="font-medium ${student.isActive ? 'text-emerald-600' : 'text-red-600'}">${student.isActive ? 'Active' : 'Inactive'}</span></div>
                     </div>
                 </div>
@@ -1619,7 +2064,7 @@ function closeStudentProfile() {
 async function nextToken() {
     try {
         const dayOfWeek = new Date().getDay();
-        const dayToDept = {1:'DS',2:'AIML',3:'COMP',4:'IT',5:'MECH',6:'SAT',0:'SUN'};
+        const dayToDept = {1:'DS',2:'AIML',3:'COMP',4:'IT',5:'MECH'}; // Removed SAT and SUN
         const department = dayToDept[dayOfWeek];
         
         if (!department) {
@@ -1669,10 +2114,6 @@ function togglePause() {
         text.className = 'text-sm text-emerald-600 font-medium';
     }
     showToast(isPaused ? 'Queue paused' : 'Queue resumed');
-}
-
-function addExtraTime() {
-    showToast('Added 5 minutes extra time for current token');
 }
 
 // ==================== STATISTICS FUNCTIONS ====================
@@ -2042,7 +2483,7 @@ function closeDocumentModal() {
     document.getElementById('documentDetailsModal').classList.add('hidden');
 }
 
-// Edit student record
+// ✅ FIXED: Updated edit form to remove SAT and SUN options
 async function editStudentRecord(studentId) {
     try {
         const response = await apiRequest(`/admin/students/${studentId}`);
@@ -2076,8 +2517,7 @@ async function editStudentRecord(studentId) {
                             <option value="MECH" ${student.department === 'MECH' ? 'selected' : ''}>Mechanical (MECH)</option>
                             <option value="CIVIL" ${student.department === 'CIVIL' ? 'selected' : ''}>Civil (CIVIL)</option>
                             <option value="AUTO" ${student.department === 'AUTO' ? 'selected' : ''}>Automobile (AUTO)</option>
-                            <option value="SAT" ${student.department === 'SAT' ? 'selected' : ''}>Weekend (SAT)</option>
-                            <option value="SUN" ${student.department === 'SUN' ? 'selected' : ''}>Weekend (SUN)</option>
+                            <!-- Removed SAT and SUN options -->
                         </select>
                     </div>
                 </div>

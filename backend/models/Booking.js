@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+// Helper function to convert time string to minutes
+function convertTimeToMinutes(timeStr) {
+    const [time, period] = timeStr.split(' ');
+    let [hours, minutes] = time.split(':').map(Number);
+    
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    
+    return hours * 60 + minutes;
+}
+
 // Document verification schema
 const documentSchema = new mongoose.Schema({
     name: String,
@@ -32,7 +43,7 @@ const bookingSchema = new mongoose.Schema({
     },
     department: {
         type: String,
-        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO', 'SAT', 'SUN'],
+        enum: ['DS', 'AIML', 'COMP', 'IT', 'MECH', 'CIVIL', 'AUTO'],
         required: true
     },
     scholarId: {
@@ -135,17 +146,31 @@ bookingSchema.pre('save', function(next) {
     next();
 });
 
-// Generate token number
-bookingSchema.statics.generateTokenNumber = async function(department, slotDate) {
-    const count = await this.countDocuments({ 
-        department, 
+// ✅ FIXED: Generate token number based on time order
+bookingSchema.statics.generateTokenNumber = async function(department, slotDate, slotTime) {
+    // Get all active bookings for this date and department
+    const bookings = await this.find({
+        department,
         slotDate,
-        status: { $nin: ['rejected', 'no-show', 'cancelled'] }
+        status: { $in: ['pending', 'current'] }
     });
-    return count + 1;
+    
+    // Convert new booking time to minutes
+    const newTimeMinutes = convertTimeToMinutes(slotTime);
+    
+    // Count how many bookings have earlier time slots
+    let earlierCount = 0;
+    bookings.forEach(booking => {
+        const bookingTimeMinutes = convertTimeToMinutes(booking.slotTime);
+        if (bookingTimeMinutes < newTimeMinutes) {
+            earlierCount++;
+        }
+    });
+    
+    return earlierCount + 1;
 };
 
-// Calculate estimated wait time
+// Calculate estimated wait time (fallback - actual calculation happens in routes)
 bookingSchema.methods.getEstimatedWaitTime = function() {
     const baseTime = 7;
     return this.tokenNumber * baseTime;

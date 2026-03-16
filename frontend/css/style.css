@@ -399,3 +399,29 @@ input:disabled, select:disabled {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
+
+/* Wait time styles */
+.wait-time-display {
+    font-weight: 600;
+    transition: color 0.3s ease;
+}
+
+.extra-time-badge {
+    background-color: #fef3c7;
+    color: #92400e;
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 9999px;
+    margin-left: 0.5rem;
+}
+
+/* Time slot disabled styles */
+option:disabled {
+    color: #94a3b8;
+    background-color: #f1f5f9;
+}
+
+option:checked {
+    background-color: #10b981;
+    color: white;
+}

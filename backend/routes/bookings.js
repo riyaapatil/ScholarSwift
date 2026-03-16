@@ -6,6 +6,23 @@ const Booking = require('../models/Booking');
 const User = require('../models/User');
 const { protect, studentOnly } = require('../middleware/auth');
 
+// Helper function to convert time string to minutes
+function convertTimeToMinutes(timeStr) {
+    const [time, period] = timeStr.split(' ');
+    let [hours, minutes] = time.split(':').map(Number);
+    
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    
+    return hours * 60 + minutes;
+}
+
+// Helper function to get day name
+function getDayName(dayNumber) {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[dayNumber];
+}
+
 // @route   PUT /api/bookings/cancel/:bookingId
 // @desc    Cancel a booking
 // @access  Private
@@ -44,7 +61,7 @@ router.put('/cancel/:bookingId', protect, async (req, res) => {
     }
 });
 
-// Department to day mapping (Friday has multiple departments)
+// Department to day mapping (Friday has multiple departments, includes weekends)
 const deptToDay = {
     'DS': 1,      // Monday
     'AIML': 2,    // Tuesday
@@ -52,7 +69,7 @@ const deptToDay = {
     'IT': 4,      // Thursday
     'MECH': 5,    // Friday
     'CIVIL': 5,   // Friday
-    'AUTO': 5,     // Friday
+    'AUTO': 5,    // Friday
     'SAT': 6,     // Saturday
     'SUN': 0      // Sunday
 };
@@ -69,9 +86,11 @@ const validateBooking = [
 router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
     try {
         console.log('📝 Creating booking for user:', req.user.email);
+        console.log('Request body:', req.body);
         
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
+            console.log('❌ Validation errors:', errors.array());
             return res.status(400).json({ errors: errors.array() });
         }
 
@@ -81,8 +100,11 @@ router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
         const bookingDate = new Date(slotDate);
         const dayOfWeek = bookingDate.getDay();
         
+        console.log('Department:', req.user.department, 'Day of week:', dayOfWeek);
+        
         // Check if department is allowed on this day
         if (deptToDay[req.user.department] !== dayOfWeek) {
+            console.log('❌ Wrong day for department');
             return res.status(400).json({ 
                 message: `Your department (${req.user.department}) can only book on ${getDayName(deptToDay[req.user.department])}s` 
             });
@@ -95,28 +117,18 @@ router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
         });
 
         if (existingBooking) {
+            console.log('❌ User already has active booking:', existingBooking._id);
             return res.status(400).json({ 
                 message: 'You already have an active booking' 
             });
         }
 
-        // Check if was recently rejected (can rebook)
-        const rejectedBooking = await Booking.findOne({
-            userId: req.user._id,
-            status: 'rejected',
-            canRebook: true
-        });
+        // Generate token number based on time
+        console.log('Generating token number for:', slotDate, slotTime);
+        const tokenNumber = await Booking.generateTokenNumber(req.user.department, slotDate, slotTime);
+        console.log('Generated token number:', tokenNumber);
 
-        if (rejectedBooking) {
-            // Allow rebooking, mark old booking as no-show
-            rejectedBooking.canRebook = false;
-            await rejectedBooking.save();
-        }
-
-        // Generate token number
-        const tokenNumber = await Booking.generateTokenNumber(req.user.department, slotDate);
-
-        // Create booking with document checklist based on scholarship type
+        // Create booking
         const booking = new Booking({
             userId: req.user._id,
             name: req.user.name,
@@ -138,16 +150,29 @@ router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
         booking.initializeDocuments();
 
         await booking.save();
+        console.log('✅ Booking saved with ID:', booking._id);
 
-        console.log('✅ Booking created:', booking._id);
-
-        // Calculate students before in queue
-        const studentsBefore = await Booking.countDocuments({
+        // Calculate students before based on time
+        const allBookings = await Booking.find({
             department: req.user.department,
             slotDate,
-            tokenNumber: { $lt: tokenNumber },
             status: { $in: ['pending', 'current'] }
         });
+
+        const convertTimeToMinutes = (timeStr) => {
+            const [time, period] = timeStr.split(' ');
+            let [hours, minutes] = time.split(':').map(Number);
+            if (period === 'PM' && hours !== 12) hours += 12;
+            if (period === 'AM' && hours === 12) hours = 0;
+            return hours * 60 + minutes;
+        };
+
+        const sortedBookings = allBookings.sort((a, b) => 
+            convertTimeToMinutes(a.slotTime) - convertTimeToMinutes(b.slotTime)
+        );
+
+        const position = sortedBookings.findIndex(b => b._id.toString() === booking._id.toString()) + 1;
+        const studentsBefore = position - 1;
 
         res.status(201).json({
             message: 'Booking created successfully',
@@ -157,8 +182,9 @@ router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
                 slotDate: booking.slotDate,
                 slotTime: booking.slotTime,
                 status: booking.status,
-                estimatedWaitTime: booking.getEstimatedWaitTime(),
-                studentsBefore: studentsBefore
+                estimatedWaitTime: studentsBefore * 7,
+                studentsBefore: studentsBefore,
+                queuePosition: position
             }
         });
     } catch (error) {
@@ -166,12 +192,6 @@ router.post('/', protect, studentOnly, validateBooking, async (req, res) => {
         res.status(500).json({ message: 'Server error while creating booking: ' + error.message });
     }
 });
-
-// Helper function to get day name
-function getDayName(dayNumber) {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return days[dayNumber];
-}
 
 // @route   GET /api/bookings/my-bookings
 // @desc    Get current user's bookings
@@ -183,18 +203,14 @@ router.get('/my-bookings', protect, async (req, res) => {
         }).sort({ createdAt: -1 });
 
         const formattedBookings = bookings.map(booking => {
-            // Calculate students before in queue
-            const studentsBefore = 0; // This would need a separate query
-            
             return {
                 id: booking._id,
                 token: `${booking.department}-${String(booking.tokenNumber).padStart(3, '0')}`,
                 slotDate: booking.slotDate,
                 slotTime: booking.slotTime,
                 status: booking.status,
-                documents: Object.fromEntries(booking.documents || new Map()),
+                documents: booking.documents instanceof Map ? Object.fromEntries(booking.documents) : (booking.documents || {}),
                 estimatedWaitTime: booking.getEstimatedWaitTime(),
-                studentsBefore: studentsBefore,
                 canRebook: booking.canRebook,
                 createdAt: booking.createdAt
             };
@@ -230,13 +246,19 @@ router.get('/current', async (req, res) => {
             });
         }
 
-        // Calculate students before in queue
-        const studentsBefore = await Booking.countDocuments({
+        // Calculate students before in queue based on time
+        const allBookings = await Booking.find({
             department: currentBooking.department,
             slotDate: currentBooking.slotDate,
-            tokenNumber: { $lt: currentBooking.tokenNumber },
             status: { $in: ['pending', 'current'] }
         });
+
+        const sortedBookings = allBookings.sort((a, b) => 
+            convertTimeToMinutes(a.slotTime) - convertTimeToMinutes(b.slotTime)
+        );
+
+        const position = sortedBookings.findIndex(b => b._id.toString() === currentBooking._id.toString()) + 1;
+        const studentsBefore = position - 1;
 
         res.json({
             currentToken: `${currentBooking.department}-${String(currentBooking.tokenNumber).padStart(3, '0')}`,
@@ -255,7 +277,7 @@ router.get('/current', async (req, res) => {
 });
 
 // @route   GET /api/bookings/position
-// @desc    Get user's position in queue
+// @desc    Get user's position in queue (based on time)
 // @access  Private
 router.get('/position', protect, async (req, res) => {
     try {
@@ -274,30 +296,50 @@ router.get('/position', protect, async (req, res) => {
             });
         }
 
-        // Count students before in queue (excluding cancelled and rejected)
-        const studentsBefore = await Booking.countDocuments({
+        // Get all bookings for today sorted by time
+        const allBookings = await Booking.find({
             department: userBooking.department,
             slotDate: today,
-            tokenNumber: { $lt: userBooking.tokenNumber },
             status: { $in: ['pending', 'current'] }
         });
 
+        // Helper to convert time to minutes
+        const convertTimeToMinutes = (timeStr) => {
+            const [time, period] = timeStr.split(' ');
+            let [hours, minutes] = time.split(':').map(Number);
+            if (period === 'PM' && hours !== 12) hours += 12;
+            if (period === 'AM' && hours === 12) hours = 0;
+            return hours * 60 + minutes;
+        };
+
+        // Sort by time (earliest first)
+        const sortedBookings = allBookings.sort((a, b) => 
+            convertTimeToMinutes(a.slotTime) - convertTimeToMinutes(b.slotTime)
+        );
+
+        // Find user's position
+        const position = sortedBookings.findIndex(b => b._id.toString() === userBooking._id.toString()) + 1;
+        const studentsBefore = position - 1;
+
         // Get current serving token
-        const currentToken = await Booking.findOne({
-            department: userBooking.department,
-            slotDate: today,
-            status: 'current'
-        });
+        const currentToken = sortedBookings.find(b => b.status === 'current');
+
+        // ✅ FIXED: Calculate dynamic wait time (7 min per student before)
+        // This will be updated in real-time as students are served
+        const estimatedWaitTime = studentsBefore * 7;
 
         res.json({
             hasBooking: true,
             token: `${userBooking.department}-${String(userBooking.tokenNumber).padStart(3, '0')}`,
             studentsBefore: studentsBefore,
+            queuePosition: position,
+            totalInQueue: sortedBookings.length,
             currentToken: currentToken ? 
                 `${currentToken.department}-${String(currentToken.tokenNumber).padStart(3, '0')}` : 
                 null,
-            estimatedWaitTime: userBooking.getEstimatedWaitTime(),
-            status: userBooking.status
+            estimatedWaitTime: estimatedWaitTime,
+            status: userBooking.status,
+            slotTime: userBooking.slotTime
         });
     } catch (error) {
         console.error('Fetch position error:', error);
@@ -325,17 +367,18 @@ router.get('/available-slots', protect, async (req, res) => {
 
         const bookedSlots = bookings.map(b => b.slotTime);
 
-        // Generate all possible slots
+        // ✅ FIXED: Generate all possible slots from 9:30 AM to 7:00 PM
         const allSlots = [];
         let hours = 9;
         let minutes = 30;
-        const endHours = 17;
-        const breakStart = 13 * 60;
-        const breakEnd = 14 * 60;
+        const endHours = 19; // 7:00 PM
+        const breakStart = 13 * 60; // 1:00 PM
+        const breakEnd = 14 * 60;    // 2:00 PM
 
         while (hours < endHours || (hours === endHours && minutes === 0)) {
             const currentMinutes = hours * 60 + minutes;
             
+            // Skip lunch break
             if (currentMinutes >= breakStart && currentMinutes < breakEnd) {
                 hours = 14;
                 minutes = 0;
@@ -347,9 +390,26 @@ router.get('/available-slots', protect, async (req, res) => {
             const displayHoursFormatted = displayHours === 0 ? 12 : displayHours;
             const timeStr = `${displayHoursFormatted}:${String(minutes).padStart(2, '0')} ${ampm}`;
 
+            // Check if this is a future slot (for today)
+            const today = new Date().toISOString().split('T')[0];
+            const isToday = date === today;
+            
+            let isAvailable = !bookedSlots.includes(timeStr);
+            
+            // If it's today, also check if slot time is in the future
+            if (isToday) {
+                const now = new Date();
+                const currentMinutesTotal = now.getHours() * 60 + now.getMinutes();
+                if (currentMinutes > currentMinutesTotal) {
+                    isAvailable = isAvailable && true;
+                } else {
+                    isAvailable = false;
+                }
+            }
+
             allSlots.push({
                 time: timeStr,
-                available: !bookedSlots.includes(timeStr)
+                available: isAvailable
             });
 
             minutes += 7;
